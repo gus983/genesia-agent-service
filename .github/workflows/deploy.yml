@@ -40,7 +40,13 @@ jobs:
           echo "${{ secrets.VPS_SSH_KEY }}" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
           ssh-keyscan -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_HOST }}" >> "$HOME/.ssh/known_hosts" || true
-
+      
+      - name: Debug SSH target
+        shell: bash
+        run: |
+          echo "HOST=${{ secrets.VPS_HOST }}"
+          echo "USER=${{ secrets.VPS_USER }}"
+          
       - name: Rsync repo to VPS (${{ env.DEPLOY_DIR }})
         shell: bash
         run: |
