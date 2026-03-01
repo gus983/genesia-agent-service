@@ -1,0 +1,20 @@
+services:
+  genesia-agent-service:
+    container_name: genesia-agent-service
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4020:4020"
+    env_file:
+      - /opt/stacks/genesia-agent-service/.env.runtime
+    environment:
+      - AGENT_PORT=4020
+      - AGENT_BIND=0.0.0.0
+    # Ensure we can reach Postgres container by name (genesia-postgres)
+    networks:
+      - wa-net
+
+networks:
+  wa-net:
+    external: true

@@ -1,0 +1,18 @@
+{
+  "name": "genesia-agent-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Genesia agent-service: memory/CRM + KB/RAG + policy gates for Valeria.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test",
+    "lint": "node -c src/server.js && node -c src/app.js && node -c src/db/index.js && node -c src/db/migrate.js && node -c src/routes/reply.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,68 @@
+name: Deploy genesia-agent-service (restart only)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: genesia-agent-service-deploy
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          set -euxo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          echo "${{ secrets.VPS_SSH_KEY }}" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_HOST }}" >> "$HOME/.ssh/known_hosts" || true
+
+      - name: Rsync repo to VPS (/opt/stacks/genesia-agent-service)
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --filter='P .env.runtime' \
+            -e "ssh -i $HOME/.ssh/id_ed25519 -p ${{ secrets.VPS_SSH_PORT }}" \
+            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/stacks/genesia-agent-service/
+
+      - name: Preflight
+        run: |
+          ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" <<'SSH'
+            set -euo pipefail
+            test -f /opt/stacks/genesia-agent-service/docker-compose.yml
+            test -f /opt/stacks/genesia-agent-service/src/server.js
+            test -f /opt/stacks/genesia-agent-service/.env.runtime
+            echo "Preflight OK"
+          SSH
+
+      - name: Restart container
+        run: |
+          ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" <<'SSH'
+            set -euo pipefail
+            # First-time start if missing
+            if ! docker ps -a --format '{{.Names}}' | grep -q '^genesia-agent-service$'; then
+              cd /opt/stacks/genesia-agent-service
+              docker compose up -d --build
+            else
+              docker restart genesia-agent-service
+            fi
+            docker ps --filter "name=genesia-agent-service" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          SSH
