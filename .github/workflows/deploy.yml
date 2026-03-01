@@ -1,4 +1,4 @@
-name: Deploy genesia-agent-service 
+nname: Deploy genesia-agent-service
 
 on:
   push:
@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup SSH key
+        shell: bash
         run: |
           set -euxo pipefail
           install -d -m 700 "$HOME/.ssh"
@@ -36,7 +37,9 @@ jobs:
           ssh-keyscan -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_HOST }}" >> "$HOME/.ssh/known_hosts" || true
 
       - name: Rsync repo to VPS (/opt/stacks/genesia-agent-service)
+        shell: bash
         run: |
+          set -euo pipefail
           rsync -az --delete \
             --exclude '.git' \
             --filter='P .env.runtime' \
@@ -44,36 +47,32 @@ jobs:
             ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/stacks/genesia-agent-service/
 
       - name: Preflight
+        shell: bash
         run: |
-          ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" <<'SSH'
-            set -euo pipefail
-            test -f /opt/stacks/genesia-agent-service/docker-compose.yml
-            test -f /opt/stacks/genesia-agent-service/src/server.js
-            test -f /opt/stacks/genesia-agent-service/.env.runtime
-            echo "Preflight OK"
-          SSH
+          ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "set -euo pipefail; \
+             test -f /opt/stacks/genesia-agent-service/docker-compose.yml; \
+             test -f /opt/stacks/genesia-agent-service/src/server.js; \
+             test -f /opt/stacks/genesia-agent-service/.env.runtime; \
+             echo Preflight OK"
 
-      - name: Deploy (smart) + smoke test
-  shell: bash
-  run: |
-    set -euo pipefail
+      - name: Deploy (smart recreate) + smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    # Decide if we need a rebuild
-    NEED_BUILD=0
-    if git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" | egrep -q '^(Dockerfile|package\.json|package-lock\.json)$'; then
-      NEED_BUILD=1
-    fi
-    echo "NEED_BUILD=$NEED_BUILD"
+          NEED_BUILD=0
+          if git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" | egrep -q '^(Dockerfile|package\.json|package-lock\.json)$'; then
+            NEED_BUILD=1
+          fi
+          echo "NEED_BUILD=$NEED_BUILD"
 
-    ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" <<SSH
-    set -euo pipefail
-    cd /opt/stacks/genesia-agent-service
-    if [ "$NEED_BUILD" -eq 1 ]; then
-      docker compose -f docker-compose.yml up -d --build --force-recreate
-    else
-      docker compose -f docker-compose.yml up -d --force-recreate
-    fi
-    curl -fsS http://127.0.0.1:4020/health >/dev/null
-    echo "OK: deployed and healthy"
-    docker ps --filter "name=genesia-agent-service" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-    SSH
+          SSH_BASE="ssh -i $HOME/.ssh/id_ed25519 -p '${{ secrets.VPS_SSH_PORT }}' '${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}'"
+
+          if [ "$NEED_BUILD" -eq 1 ]; then
+            eval "$SSH_BASE" "set -euo pipefail; cd /opt/stacks/genesia-agent-service; docker compose -f docker-compose.yml up -d --build --force-recreate"
+          else
+            eval "$SSH_BASE" "set -euo pipefail; cd /opt/stacks/genesia-agent-service; docker compose -f docker-compose.yml up -d --force-recreate"
+          fi
+
+          eval "$SSH_BASE" "curl -fsS http://127.0.0.1:4020/health >/dev/null; echo OK: deployed and healthy"
