@@ -56,9 +56,9 @@ jobs:
         run: |
           ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             "set -euo pipefail; \
-             test -f ${{ env.DEPLOY_DIR }}/docker-compose.yml
-             test -f ${{ env.DEPLOY_DIR }}/src/server.js
-             test -f ${{ env.DEPLOY_DIR }}/.env.runtime
+             test -f ${{ env.DEPLOY_DIR }}/docker-compose.yml; \
+             test -f ${{ env.DEPLOY_DIR }}/src/server.js; \
+             test -f ${{ env.DEPLOY_DIR }}/.env.runtime; \
              echo Preflight OK"
 
       - name: Deploy (smart recreate) + smoke test
@@ -67,7 +67,6 @@ jobs:
           set -euo pipefail
 
           NEED_BUILD=0
-          # Use last commit diff; if not available, default to build
           if git diff --name-only HEAD~1..HEAD 2>/dev/null | egrep -q '^(Dockerfile|package\.json|package-lock\.json)$'; then
             NEED_BUILD=1
           fi
@@ -76,9 +75,9 @@ jobs:
           SSH_BASE="ssh -i $HOME/.ssh/id_ed25519 -p '${{ secrets.VPS_SSH_PORT }}' '${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}'"
 
           if [ "$NEED_BUILD" -eq 1 ]; then
-            eval "$SSH_BASE" "set -euo pipefail; cd $DEPLOY_DIR; docker compose -f docker-compose.yml up -d --build --force-recreate"
+            eval "$SSH_BASE" "set -euo pipefail; cd '${{ env.DEPLOY_DIR }}'; docker compose -f docker-compose.yml up -d --build --force-recreate"
           else
-            eval "$SSH_BASE" "set -euo pipefail; cd $DEPLOY_DIR; docker compose -f docker-compose.yml up -d --force-recreate"
+            eval "$SSH_BASE" "set -euo pipefail; cd '${{ env.DEPLOY_DIR }}'; docker compose -f docker-compose.yml up -d --force-recreate"
           fi
 
           eval "$SSH_BASE" "curl -fsS http://127.0.0.1:4020/health >/dev/null; echo OK: deployed and healthy"
