@@ -90,4 +90,5 @@ jobs:
               "set -euo pipefail; cd '${{ env.DEPLOY_DIR }}'; docker compose -f docker-compose.yml up -d --force-recreate"
           fi
 
-          eval "$SSH_BASE" "curl -fsS http://127.0.0.1:4020/health >/dev/null; echo OK: deployed and healthy"
+          ssh -i "$HOME/.ssh/id_ed25519" -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            "curl -fsS http://127.0.0.1:4020/health >/dev/null; echo OK: deployed and healthy"
