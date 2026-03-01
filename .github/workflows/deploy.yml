@@ -9,6 +9,9 @@ concurrency:
   group: genesia-agent-service-deploy
   cancel-in-progress: true
 
+env:
+  DEPLOY_DIR: /opt/stacks/genesia-agent-service
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -38,7 +41,7 @@ jobs:
           chmod 600 "$HOME/.ssh/id_ed25519"
           ssh-keyscan -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_HOST }}" >> "$HOME/.ssh/known_hosts" || true
 
-      - name: Rsync repo to VPS (/opt/stacks/genesia-agent-service)
+      - name: Rsync repo to VPS (${{ env.DEPLOY_DIR }})
         shell: bash
         run: |
           set -euo pipefail
@@ -46,16 +49,16 @@ jobs:
             --exclude '.git' \
             --filter='P .env.runtime' \
             -e "ssh -i $HOME/.ssh/id_ed25519 -p ${{ secrets.VPS_SSH_PORT }}" \
-            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/stacks/genesia-agent-service/
+            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.DEPLOY_DIR }}/
 
       - name: Preflight
         shell: bash
         run: |
           ssh -i $HOME/.ssh/id_ed25519 -p "${{ secrets.VPS_SSH_PORT }}" "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
             "set -euo pipefail; \
-             test -f /opt/stacks/genesia-agent-service/docker-compose.yml; \
-             test -f /opt/stacks/genesia-agent-service/src/server.js; \
-             test -f /opt/stacks/genesia-agent-service/.env.runtime; \
+             test -f ${{ env.DEPLOY_DIR }}/docker-compose.yml
+             test -f ${{ env.DEPLOY_DIR }}/src/server.js
+             test -f ${{ env.DEPLOY_DIR }}/.env.runtime
              echo Preflight OK"
 
       - name: Deploy (smart recreate) + smoke test
@@ -73,9 +76,9 @@ jobs:
           SSH_BASE="ssh -i $HOME/.ssh/id_ed25519 -p '${{ secrets.VPS_SSH_PORT }}' '${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}'"
 
           if [ "$NEED_BUILD" -eq 1 ]; then
-            eval "$SSH_BASE" "set -euo pipefail; cd /opt/stacks/genesia-agent-service; docker compose -f docker-compose.yml up -d --build --force-recreate"
+            eval "$SSH_BASE" "set -euo pipefail; cd $DEPLOY_DIR; docker compose -f docker-compose.yml up -d --build --force-recreate"
           else
-            eval "$SSH_BASE" "set -euo pipefail; cd /opt/stacks/genesia-agent-service; docker compose -f docker-compose.yml up -d --force-recreate"
+            eval "$SSH_BASE" "set -euo pipefail; cd $DEPLOY_DIR; docker compose -f docker-compose.yml up -d --force-recreate"
           fi
 
           eval "$SSH_BASE" "curl -fsS http://127.0.0.1:4020/health >/dev/null; echo OK: deployed and healthy"
