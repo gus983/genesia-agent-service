@@ -1,4 +1,4 @@
-nname: Deploy genesia-agent-service
+name: Deploy genesia-agent-service
 
 on:
   push:
