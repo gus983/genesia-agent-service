@@ -213,22 +213,6 @@ export function replyRouter() {
         contact_type: inferredContactType,
         interest: inferredInterest,
         intent,
-        knowledge: {}
-      };
-
-      // Pricing/options share same KB item
-      if (intent === 'pricing' || intent === 'options' || intent === 'honorarium') {
-        if (market) {
-          const kb = await fetchKnowledgeItem(client, { domain: 'nipt', kind: 'pricing', market, key: 'nipt.pricing' });
-          if (kb) facts.knowledge.nipt_pricing = kb;
-        }
-      }
-
-      const facts = {
-        market,
-        contact_type: inferredContactType,
-        interest: inferredInterest,
-        intent,
       };
 
       // Generic KB bundle (market-specific + global)
@@ -254,7 +238,7 @@ export function replyRouter() {
         transcriptLines.length ? transcriptLines.join('\n') : '(sin historial)',
         '',
         'Contexto (facts JSON):',
-        trimJsonForPrompt(facts)
+        trimJsonForPrompt(facts),
         '',
         'Instrucciones:',
         '- Respondé natural, breve y profesional.',
