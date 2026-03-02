@@ -1,5 +1,6 @@
 import express from 'express';
 import { getPool } from '../db/index.js';
+import { llmReply } from '../lib/llm.js';
 
 function inferMarketFromWaId(wa_id = '') {
   const s = String(wa_id).replace(/^\+/, '');
@@ -24,29 +25,37 @@ function classifyInterest(text = '') {
   return 'unknown';
 }
 
-function looksLikePricingQuestion(text = '') {
+function extractIntent(text = '') {
   const t = String(text).toLowerCase();
-  return /\b(precio|precios|cu[aá]nto|cuanto|valor|costo|costos|tarifa|arancel)\b/.test(t);
+  if (/\b(precio|precios|cu[aá]nto|cuanto|valor|costo|costos|tarifa|arancel)\b/.test(t)) return 'pricing';
+  if (/\b(opciones|opci(o|ó)n|tests?|men[uú]|alternativas)\b/.test(t)) return 'options';
+  if (/\b(proceso|procedimiento|log[ií]stica|pasos|turno|muestra|toma|resultado|entrega)\b/.test(t)) return 'procedure';
+  if (/\b(honorario|honorarios|comisi(o|ó)n|comisiones)\b/.test(t)) return 'honorarium';
+  return 'general';
 }
 
-function wantsHonorarium(text = '') {
-  const t = String(text).toLowerCase();
-  return /\b(honorario|honorarios|comisi(o|ó)n|comisiones)\b/.test(t);
+async function fetchKnowledgeItem(client, { domain, kind, market, key }) {
+  const { rows } = await client.query(
+    `SELECT data, updated_at
+     FROM knowledge_items
+     WHERE domain=$1 AND kind=$2 AND key=$3 AND market IS NOT DISTINCT FROM $4
+     LIMIT 1`,
+    [domain, kind, key, market]
+  );
+  return rows[0] || null;
 }
 
-function formatMoney(currency, amount) {
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return `${amount} ${currency}`;
-  if (currency === 'USD') return `USD ${n}`;
-  if (currency === 'COP') return `${n.toLocaleString('es-CO')} COP`;
-  if (currency === 'PEN') return `S/ ${n.toLocaleString('es-PE')}`;
-  return `${n} ${currency}`;
-}
+const SYSTEM_PROMPT = [
+  "Sos Valeria, especialista en implementación de NIPT para obstetras (Genesia).",
+  "Tono: breve, profesional, claro. Un bloque conceptual por mensaje.",
+  "Objetivo: ayudar a incorporar NIPT de forma simple, segura y profesional; mover 1 etapa por conversación con 1 pregunta concreta.",
+  "Nunca prometas certezas: NIPT es screening, no diagnóstico.",
+  "Si no tenés un dato específico, decilo con honestidad y pedí 1 dato para poder confirmarlo (ej. ciudad).",
+].join('\n');
 
 export function replyRouter() {
   const r = express.Router();
 
-  // POST /reply { wa_id, text, country? }
   r.post('/', async (req, res) => {
     const { wa_id, text, country } = req.body || {};
     if (!wa_id) return res.status(400).json({ ok: false, error: 'missing_wa_id' });
@@ -58,11 +67,12 @@ export function replyRouter() {
     const inferredMarket = inferMarketFromWaId(wa_id);
     const inferredContactType = classifyContactType(userText);
     const inferredInterest = classifyInterest(userText);
+    const intent = extractIntent(userText);
 
     try {
       await client.query('BEGIN');
 
-      // Upsert contact (keep existing non-unknown contact_type)
+      // Upsert contact
       await client.query(
         `INSERT INTO contacts (wa_id, country, contact_type, updated_at)
          VALUES ($1, $2, $3, now())
@@ -76,7 +86,7 @@ export function replyRouter() {
         [wa_id, country || inferredMarket || null, inferredContactType]
       );
 
-      // Minimal interest/state update
+      // Minimal state update
       if (inferredInterest !== 'unknown') {
         await client.query(
           `INSERT INTO contact_state (wa_id, product_interest, updated_at)
@@ -89,75 +99,65 @@ export function replyRouter() {
       // Log inbound
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
-        [wa_id, userText, { source: 'wa-bridge' }]
+        [wa_id, userText, { source: 'wa-bridge', intent, inferredMarket, inferredContactType, inferredInterest }]
       );
 
-      // Pricing path (NIPT)
-      let replyText = null;
+      // Fetch relevant facts (KB)
+      const market = inferredMarket || (country ? String(country).toUpperCase() : null);
 
-      if (looksLikePricingQuestion(userText)) {
-        const market = inferredMarket || (country ? String(country).toUpperCase() : null);
+      const facts = {
+        market,
+        contact_type: inferredContactType,
+        interest: inferredInterest,
+        intent,
+        knowledge: {}
+      };
 
-        if (!market) {
-          replyText = 'Para pasarte los precios: ¿es para Argentina, Colombia o Perú?';
-        } else {
-          const { rows } = await client.query(
-            `SELECT data
-             FROM knowledge_items
-             WHERE domain='nipt' AND kind='pricing' AND key='nipt.pricing' AND market=$1
-             LIMIT 1`,
-            [market]
-          );
-
-          if (!rows.length) {
-            replyText = `Todavía no tengo cargados los precios para ${market}. ¿Me confirmás país y ciudad?`;
-          } else {
-            const data = rows[0].data || {};
-            const products = Array.isArray(data.products) ? data.products : [];
-
-            const ctRes = await client.query(`SELECT contact_type FROM contacts WHERE wa_id=$1`, [wa_id]);
-            const contactType = ctRes.rows?.[0]?.contact_type || 'unknown';
-            const wantHon = wantsHonorarium(userText);
-
-            const lines = products.map((p) => {
-              const name = p?.name || p?.product_name || p?.code || 'Opción';
-              const vendor = p?.vendor ? ` (${p.vendor})` : '';
-              const price = formatMoney(p?.patient_currency || p?.currency || 'USD', p?.patient_price);
-              let s = `${name}${vendor}: ${price}`;
-
-              if (wantHon) {
-                if (contactType === 'medico') {
-                  const hon = Number(p?.doctor_honorarium_usd);
-                  if (Number.isFinite(hon)) s += ` — Honorario médico: USD ${hon}`;
-                }
-              }
-              return s;
-            });
-
-            replyText =
-              `Opciones NIPT (${market}):\n` +
-              (lines.length ? lines.join('\n') : 'No hay productos cargados aún.') +
-              (wantHon && contactType !== 'medico'
-                ? `\n\nEl honorario médico lo comparto solo con profesionales. ¿Sos médico/a?`
-                : '');
-          }
+      // Pricing/options share same KB item
+      if (intent === 'pricing' || intent === 'options' || intent === 'honorarium') {
+        if (market) {
+          const kb = await fetchKnowledgeItem(client, { domain: 'nipt', kind: 'pricing', market, key: 'nipt.pricing' });
+          if (kb) facts.knowledge.nipt_pricing = kb;
         }
       }
 
+      // (Future) journey/procedure: nipt.patient_journey
+      if (intent === 'procedure') {
+        const kb = await fetchKnowledgeItem(client, { domain: 'nipt', kind: 'logistics', market: market || null, key: 'nipt.patient_journey' });
+        if (kb) facts.knowledge.nipt_patient_journey = kb;
+      }
+
+      // Build user prompt with facts
+      const userPrompt = [
+        `Mensaje: ${userText}`,
+        '',
+        'Contexto (facts JSON):',
+        JSON.stringify(facts, null, 2),
+        '',
+        'Instrucciones:',
+        '- Si el usuario pregunta precios u opciones: usar nipt_pricing si está presente.',
+        '- Honorarios médicos: solo mencionarlos si contact_type == "medico". Si piden honorarios y no es médico, pedí confirmación de profesional.',
+        '- Cerrá con 1 pregunta concreta para avanzar (ej. ciudad / semanas / opción).'
+      ].join('\n');
+
+      const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
+      const replyText = String(out?.text || '').trim() || 'Gracias. ¿En qué ciudad estás y si es para una paciente o para tu práctica médica?';
+
+      // Log outbound
+      await client.query(
+        `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
+        [wa_id, replyText, { provider: out.provider, ms: out.ms }]
+      );
+
       await client.query('COMMIT');
 
-      return res.json({
-        ok: true,
-        reply: replyText || 'Recibido. (MVP) En breve integramos KB/RAG + políticas + follow-ups.',
-        action: { kind: 'text' }
-      });
+      return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
     } catch (e) {
       await client.query('ROLLBACK');
       console.error('reply failed:', e?.message || e);
       return res.status(500).json({ ok: false, error: 'reply_failed' });
     } finally {
       client.release();
-      // IMPORTANT: do NOT pool.end() in request handler
     }
   });
 

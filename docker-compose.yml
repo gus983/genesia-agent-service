@@ -9,6 +9,7 @@ services:
     env_file:
       - /opt/stacks/genesia-agent-service/.env.runtime
       - /home/agent/.genesia/secrets.env
+      - /home/agent/.genesia/agent-service.secrets.env
     environment:
       - AGENT_PORT=4020
       - AGENT_BIND=0.0.0.0
