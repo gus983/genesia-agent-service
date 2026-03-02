@@ -18,6 +18,38 @@ function classifyContactType(text = '') {
   return 'unknown';
 }
 
+function contextDays() {
+  const n = Number(process.env.CONTEXT_DAYS || 60);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 365) : 60;
+}
+
+function contextMaxMessages() {
+  const n = Number(process.env.CONTEXT_MAX_MESSAGES || 40);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 200) : 40;
+}
+
+async function fetchRecentTranscript(client, wa_id) {
+  const days = contextDays();
+  const max = contextMaxMessages();
+
+  const { rows } = await client.query(
+    `SELECT direction, text, created_at
+     FROM messages
+     WHERE wa_id = $1
+       AND created_at >= now() - ($2 || ' days')::interval
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [wa_id, String(days), max]
+  );
+
+  // rows are newest-first; reverse to chronological
+  return rows.reverse().map((r) => {
+    const role = r.direction === 'out' ? 'Valeria' : 'Contacto';
+    const t = String(r.text || '').replace(/\s+/g, ' ').trim();
+    return `${role}: ${t}`;
+  });
+}
+
 function classifyInterest(text = '') {
   const t = String(text).toLowerCase();
   if (/\b(nipt|trisom(i|í)a|down|tamiz|aneuploid|cfdna)\b/.test(t)) return 'nipt';
@@ -104,7 +136,7 @@ export function replyRouter() {
           return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
         }
       }
-      
+
       // Minimal state update
       if (inferredInterest !== 'unknown') {
         await client.query(
@@ -146,17 +178,23 @@ export function replyRouter() {
         if (kb) facts.knowledge.nipt_patient_journey = kb;
       }
 
-      // Build user prompt with facts
+         // Build user prompt with facts + recent transcript
+      const transcriptLines = await fetchRecentTranscript(client, wa_id);
+
       const userPrompt = [
-        `Mensaje: ${userText}`,
+        `Mensaje actual: ${userText}`,
+        '',
+        `Transcript reciente (últimos ${contextDays()} días, máx ${contextMaxMessages()} mensajes):`,
+        transcriptLines.length ? transcriptLines.join('\n') : '(sin historial)',
         '',
         'Contexto (facts JSON):',
         JSON.stringify(facts, null, 2),
         '',
         'Instrucciones:',
+        '- Respondé natural, breve y profesional.',
         '- Si el usuario pregunta precios u opciones: usar nipt_pricing si está presente.',
-        '- Honorarios médicos: solo mencionarlos si contact_type == "medico". Si piden honorarios y no es médico, pedí confirmación de profesional.',
-        '- Cerrá con 1 pregunta concreta para avanzar (ej. ciudad / semanas / opción).'
+        '- Honorarios médicos: solo mencionarlos si contact_type == "medico". Si no, pedir confirmación sin mencionar honorarios/tablas.',
+        '- Cerrá con 1 pregunta concreta para avanzar.'
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
