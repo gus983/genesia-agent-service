@@ -85,6 +85,58 @@ const SYSTEM_PROMPT = [
   "Si no tenés un dato específico, decilo con honestidad y pedí 1 dato para poder confirmarlo (ej. ciudad).",
 ].join('\n');
 
+function kbMaxItems() {
+  const n = Number(process.env.KB_MAX_ITEMS || 50);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 200) : 50;
+}
+
+function kbMaxJsonChars() {
+  const n = Number(process.env.KB_MAX_JSON_CHARS || 25000);
+  return Number.isFinite(n) && n > 1000 ? Math.min(n, 200000) : 25000;
+}
+
+async function fetchIncludeKinds(client, { domain }) {
+  const { rows } = await client.query(
+    `SELECT data
+     FROM knowledge_items
+     WHERE domain=$1 AND kind='config' AND key='kb.include_kinds' AND market IS NULL
+     LIMIT 1`,
+    [domain]
+  );
+
+  const kinds = rows?.[0]?.data?.kinds;
+  if (Array.isArray(kinds) && kinds.length) return kinds.map(k => String(k).trim()).filter(Boolean);
+
+  // safe default if config missing
+  return ['pricing', 'product_specs', 'logistics', 'faq', 'scripts'];
+}
+
+async function fetchKnowledgeBundle(client, { domain, market }) {
+  const kinds = await fetchIncludeKinds(client, { domain });
+  const maxItems = kbMaxItems();
+
+  const { rows } = await client.query(
+    `SELECT domain, kind, market, key, data, updated_at
+     FROM knowledge_items
+     WHERE domain=$1
+       AND kind = ANY($2::text[])
+       AND (market IS NULL OR market = $3)
+     ORDER BY updated_at DESC
+     LIMIT $4`,
+    [domain, kinds, market, maxItems]
+  );
+
+  return rows;
+}
+
+function trimJsonForPrompt(obj) {
+  const maxChars = kbMaxJsonChars();
+  const s = JSON.stringify(obj, null, 2);
+  if (s.length <= maxChars) return s;
+  return s.slice(0, maxChars) + `\n... (truncated to ${maxChars} chars)`;
+}
+
+
 export function replyRouter() {
   const r = express.Router();
 
@@ -172,11 +224,25 @@ export function replyRouter() {
         }
       }
 
-      // (Future) journey/procedure: nipt.patient_journey
-      if (intent === 'procedure') {
-        const kb = await fetchKnowledgeItem(client, { domain: 'nipt', kind: 'logistics', market: market || null, key: 'nipt.patient_journey' });
-        if (kb) facts.knowledge.nipt_patient_journey = kb;
-      }
+      const facts = {
+        market,
+        contact_type: inferredContactType,
+        interest: inferredInterest,
+        intent,
+      };
+
+      // Generic KB bundle (market-specific + global)
+      const domain = inferredInterest === 'cancer' ? 'cancer' : 'nipt';
+      const knowledgeBundle = await fetchKnowledgeBundle(client, { domain, market });
+
+      facts.knowledge_bundle = knowledgeBundle.map((k) => ({
+        domain: k.domain,
+        kind: k.kind,
+        market: k.market,
+        key: k.key,
+        updated_at: k.updated_at,
+        data: k.data
+      }));
 
          // Build user prompt with facts + recent transcript
       const transcriptLines = await fetchRecentTranscript(client, wa_id);
@@ -188,7 +254,7 @@ export function replyRouter() {
         transcriptLines.length ? transcriptLines.join('\n') : '(sin historial)',
         '',
         'Contexto (facts JSON):',
-        JSON.stringify(facts, null, 2),
+        trimJsonForPrompt(facts)
         '',
         'Instrucciones:',
         '- Respondé natural, breve y profesional.',
