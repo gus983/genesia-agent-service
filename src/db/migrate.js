@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_lookup
-  ON knowledge_items (domain, kind, market, key);
+  ON knowledge_items (domain, kind, market, key)
 `;
 
 export async function migrate() {
