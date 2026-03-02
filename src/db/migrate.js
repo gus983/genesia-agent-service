@@ -35,6 +35,20 @@ CREATE TABLE IF NOT EXISTS contact_state (
   summary TEXT,
   updated_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS knowledge_items (
+  id BIGSERIAL PRIMARY KEY,
+  domain TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  market TEXT,
+  key TEXT NOT NULL,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (domain, kind, market, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_lookup
+  ON knowledge_items (domain, kind, market, key);
 `;
 
 export async function migrate() {
