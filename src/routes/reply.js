@@ -86,6 +86,25 @@ export function replyRouter() {
         [wa_id, country || inferredMarket || null, inferredContactType]
       );
 
+      // If asking for honorarium and not confirmed as doctor: be subtle (no mention of honorarios/tables)
+      if (intent === 'honorarium') {
+        const ctRes = await client.query(`SELECT contact_type FROM contacts WHERE wa_id=$1`, [wa_id]);
+        const contactType = ctRes.rows?.[0]?.contact_type || inferredContactType || 'unknown';
+
+        if (contactType !== 'medico') {
+          const replyText = 'Perfecto. Para ayudarte mejor: ¿sos profesional de la salud? ¿Tu nombre y ciudad?';
+
+          // Log outbound
+          await client.query(
+            `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
+            [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v1' }]
+          );
+
+          await client.query('COMMIT');
+          return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
+        }
+      }
+      
       // Minimal state update
       if (inferredInterest !== 'unknown') {
         await client.query(
