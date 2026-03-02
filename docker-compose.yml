@@ -8,13 +8,16 @@ services:
       - "127.0.0.1:4020:4020"
     env_file:
       - /opt/stacks/genesia-agent-service/.env.runtime
+      - /home/agent/.genesia/secrets.env
     environment:
       - AGENT_PORT=4020
       - AGENT_BIND=0.0.0.0
-    # Ensure we can reach Postgres container by name (genesia-postgres)
     networks:
       - wa-net
+      - postgres_default
 
 networks:
   wa-net:
+    external: true
+  postgres_default:
     external: true
