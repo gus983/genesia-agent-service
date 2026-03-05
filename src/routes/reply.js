@@ -1,6 +1,7 @@
 import express from 'express';
 import { getPool } from '../db/index.js';
 import { llmReply } from '../lib/llm.js';
+import { notifyAdmin } from '../lib/notify.js';
 
 function inferMarketFromWaId(wa_id = '') {
   const s = String(wa_id).replace(/^\+/, '');
@@ -148,6 +149,9 @@ const SYSTEM_PROMPT = [
   '- Prometer certezas clínicas.',
   '- Revelar honorarios o comisiones a contactos no verificados.',
   '- Hacer dos preguntas en el mismo mensaje.',
+  '',
+  'ESCALACIÓN:',
+  'Si el Conocimiento disponible no tiene los datos necesarios para responder con precisión, iniciá tu respuesta con exactamente `[ESCALAR]` (sin espacio después). Luego respondé igual de forma honesta ("No tengo esa información ahora, pero lo voy a consultar"). Nunca uses [ESCALAR] si podés responder con lo que tenés.',
 ].join('\n');
 
 export function replyRouter() {
@@ -250,7 +254,20 @@ export function replyRouter() {
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
-      const replyText = String(out?.text || '').trim() || '¿En qué puedo ayudarte hoy?';
+      let rawText = String(out?.text || '').trim();
+
+      // Detect escalation signal and strip it before sending to user
+      const shouldEscalate = rawText.startsWith('[ESCALAR]');
+      const replyText = shouldEscalate
+        ? rawText.replace(/^\[ESCALAR\]\s*/, '').trim()
+        : rawText || '¿En qué puedo ayudarte hoy?';
+
+      // Fire-and-forget admin notification
+      if (shouldEscalate) {
+        notifyAdmin({ wa_id, userText, replyText }).catch(e =>
+          console.error('notifyAdmin failed:', e?.message || e)
+        );
+      }
 
       // Log outbound
       await client.query(

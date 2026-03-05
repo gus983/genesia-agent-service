@@ -10,7 +10,17 @@ Create: `/opt/stacks/genesia-agent-service/.env.runtime` (chmod 600)
 
 Minimal:
 - `DATABASE_URL=postgres://genesia_app:<PASSWORD>@genesia-postgres:5432/genesia`
-- (later) `BRAVE_API_KEY=...`
+
+LLM:
+- `ANTHROPIC_API_KEY=...` (primary)
+- `OPENAI_API_KEY=...` (fallback)
+
+Escalación a admin vía WhatsApp (requerido para notificaciones):
+- `WA_TOKEN=...` — access token de Meta (mismo que en wa-bridge)
+- `PHONE_NUMBER_ID=...` — ID del número en Meta Business (mismo que en wa-bridge)
+- `ADMIN_NUMBER=...` — número destino sin `+` (ej: `5491112345678`)
+
+Sin estas vars el sistema funciona normalmente; solo omite el envío WA y loguea un warning.
 
 ## Endpoints
 - `GET /health`
