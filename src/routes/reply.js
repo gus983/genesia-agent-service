@@ -66,23 +66,13 @@ function extractIntent(text = '') {
   return 'general';
 }
 
-async function fetchKnowledgeItem(client, { domain, kind, market, key }) {
-  const { rows } = await client.query(
-    `SELECT data, updated_at
-     FROM knowledge_items
-     WHERE domain=$1 AND kind=$2 AND key=$3 AND market IS NOT DISTINCT FROM $4
-     LIMIT 1`,
-    [domain, kind, key, market]
-  );
-  return rows[0] || null;
-}
 
 const SYSTEM_PROMPT = [
   "Sos Valeria, especialista en implementación de NIPT para obstetras (Genesia).",
   "Tono: breve, profesional, claro. Un bloque conceptual por mensaje.",
   "Objetivo: ayudar a incorporar NIPT de forma simple, segura y profesional; mover 1 etapa por conversación con 1 pregunta concreta.",
   "Nunca prometas certezas: NIPT es screening, no diagnóstico.",
-  "Si no tenés un dato específico, decilo con honestidad y pedí 1 dato para poder confirmarlo (ej. ciudad).",
+  "Si no tenés un dato específico, decilo con honestidad y pedí 1 dato concreto para confirmarlo.",
 ].join('\n');
 
 function kbMaxItems() {
@@ -170,18 +160,18 @@ export function replyRouter() {
         [wa_id, country || inferredMarket || null, inferredContactType]
       );
 
-      // If asking for honorarium and not confirmed as doctor: be subtle (no mention of honorarios/tables)
+      // Hard guardrail: honorarios/comisiones only if verified_doctor=true in DB.
+      // Inferred contact_type is NOT sufficient — requires explicit verification.
       if (intent === 'honorarium') {
-        const ctRes = await client.query(`SELECT contact_type FROM contacts WHERE wa_id=$1`, [wa_id]);
-        const contactType = ctRes.rows?.[0]?.contact_type || inferredContactType || 'unknown';
+        const vdRes = await client.query(`SELECT verified_doctor FROM contacts WHERE wa_id=$1`, [wa_id]);
+        const verifiedDoctor = vdRes.rows?.[0]?.verified_doctor === true;
 
-        if (contactType !== 'medico') {
-          const replyText = 'Perfecto. Para ayudarte mejor: ¿sos profesional de la salud? ¿Tu nombre y ciudad?';
+        if (!verifiedDoctor) {
+          const replyText = '¿Sos obstetra/ginecólogo/médico?';
 
-          // Log outbound
           await client.query(
             `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
-            [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v1' }]
+            [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v2' }]
           );
 
           await client.query('COMMIT');
@@ -243,12 +233,12 @@ export function replyRouter() {
         'Instrucciones:',
         '- Respondé natural, breve y profesional.',
         '- Si el usuario pregunta precios u opciones: usar nipt_pricing si está presente.',
-        '- Honorarios médicos: solo mencionarlos si contact_type == "medico". Si no, pedir confirmación sin mencionar honorarios/tablas.',
+        '- Honorarios médicos: NUNCA mencionar ni insinuar honorarios, comisiones ni tablas a menos que verified_doctor sea true. El guardrail ya bloqueó esos mensajes antes de llegar acá.',
         '- Cerrá con 1 pregunta concreta para avanzar.'
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
-      const replyText = String(out?.text || '').trim() || 'Gracias. ¿En qué ciudad estás y si es para una paciente o para tu práctica médica?';
+      const replyText = String(out?.text || '').trim() || 'Gracias por escribir. ¿En qué puedo ayudarte hoy?';
 
       // Log outbound
       await client.query(
