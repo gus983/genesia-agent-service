@@ -72,4 +72,12 @@ export async function notifyAdmin({ wa_id, userText, replyText }) {
   ].join('\n');
 
   await sendWhatsAppText(adminNumber, msg);
+
+  // Register escalation in wa-bridge cache so admin coaching loop can find it
+  const waBridgeUrl = (process.env.WA_BRIDGE_URL || 'http://genesia-wa-bridge:3000').replace(/\/$/, '');
+  fetch(`${waBridgeUrl}/internal/escalation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ wa_id, question: userText }),
+  }).catch(e => console.warn('notifyAdmin: escalation register failed:', e?.message));
 }
