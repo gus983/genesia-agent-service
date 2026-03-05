@@ -140,9 +140,10 @@ const SYSTEM_PROMPT = [
   'PRINCIPIOS CLÍNICOS:',
   '- NIPT es screening, no diagnóstico. Nunca garantizar resultados.',
   '- Ante incertidumbre, pedir exactamente 1 dato para poder confirmar.',
-  '- Usar el historial para no repetir preguntas ya respondidas.',
+  '- Usar el historial para no repetir ni información ni preguntas ya dadas.',
   '',
   'TONO Y FORMATO:',
+  '- Si el contacto abre con un saludo, respondé con un saludo breve antes de ir al punto.',
   '- Respuestas de 2-4 líneas.',
   '- Sin frases vacías ni muletillas: "¡Claro!", "Por supuesto", "¿En qué más puedo ayudarte?", "Perfecto", "Para ayudarte mejor".',
   '- Sin emojis salvo que el contacto los use primero.',
@@ -201,9 +202,18 @@ export function replyRouter() {
       let verifiedDoctor = ctRes.rows?.[0]?.verified_doctor === true;
       let intentEff = intent;
 
-      // Post-gate confirmation: if last outbound was the honorarium gate question and
-      // the contact is now confirming they're a doctor, verify them and restore intent.
-      if (!verifiedDoctor && /\b(s[ií]|soy|obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
+      // Doctor self-identification: if contact says they're a doctor in any context, verify them.
+      // Also restore 'honorarium' intent if the hard gate was the last message (so the LLM answers
+      // the original pricing question instead of defaulting to generic info).
+      if (!verifiedDoctor && /\b(soy|s[ií][\s,]+soy|obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
+        await client.query(
+          `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
+          [wa_id]
+        );
+        verifiedDoctor = true;
+        console.log(`doctor_self_identified wa_id=...${String(wa_id).slice(-6)}`);
+
+        // If the last outbound was the hard gate, restore honorarium intent
         const { rows: lastOut } = await client.query(
           `SELECT meta FROM messages
            WHERE wa_id = $1 AND direction = 'out'
@@ -211,11 +221,6 @@ export function replyRouter() {
           [wa_id]
         );
         if (lastOut[0]?.meta?.rule === 'honorarium_gate_v2') {
-          await client.query(
-            `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
-            [wa_id]
-          );
-          verifiedDoctor = true;
           intentEff = 'honorarium';
           console.log(`gate_confirmed wa_id=...${String(wa_id).slice(-6)}`);
         }
