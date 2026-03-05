@@ -75,9 +75,18 @@ export async function notifyAdmin({ wa_id, userText, replyText }) {
 
   // Register escalation in wa-bridge cache so admin coaching loop can find it
   const waBridgeUrl = (process.env.WA_BRIDGE_URL || 'http://genesia-wa-bridge:3000').replace(/\/$/, '');
-  fetch(`${waBridgeUrl}/internal/escalation`, {
+  const regUrl = `${waBridgeUrl}/internal/escalation`;
+  console.log(`escalation_register_start wa_id=...${maskedId} url=${regUrl}`);
+  fetch(regUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wa_id, question: userText }),
-  }).catch(e => console.warn('notifyAdmin: escalation register failed:', e?.message));
+  }).then(async r => {
+    if (r.ok) {
+      console.log(`escalation_register_ok wa_id=...${maskedId} status=${r.status}`);
+    } else {
+      const body = await r.text().catch(() => '');
+      console.warn(`escalation_register_fail wa_id=...${maskedId} status=${r.status} body=${body.slice(0, 200)}`);
+    }
+  }).catch(e => console.warn(`escalation_register_fail wa_id=...${maskedId} err=${e?.message}`));
 }
