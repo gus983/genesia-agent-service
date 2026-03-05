@@ -56,6 +56,8 @@ function extractIntent(text = '') {
   if (/\b(opciones|opci(o|ó)n|tests?|men[uú]|alternativas)\b/.test(t)) return 'options';
   if (/\b(proceso|procedimiento|log[ií]stica|pasos|turno|muestra|toma|resultado|entrega)\b/.test(t)) return 'procedure';
   if (/\b(honorario|honorarios|comisi(o|ó)n|comisiones)\b/.test(t)) return 'honorarium';
+  // Specific case/patient inquiry — always requires escalation
+  if (/\b(mi paciente|la paciente|su resultado|los resultados|se hizo|se realiz[oó]|hizo el test|su test|estado del caso|cu[aá]ndo sale|cu[aá]ndo est[aá]|ya tiene|ya sali[oó])\b/.test(t)) return 'case_status';
   return 'general';
 }
 
@@ -258,7 +260,9 @@ export function replyRouter() {
         userText,
         '',
         '---',
-        'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
+        intent === 'case_status'
+          ? '⚠️ INSTRUCCIÓN IMPERATIVA: El contacto pregunta sobre un caso o paciente específico. Valeria NO tiene acceso a datos de casos. Debés comenzar tu respuesta con [ESCALAR] obligatoriamente. No hagas preguntas adicionales — decile que lo vas a consultar con el equipo.'
+          : 'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
