@@ -142,7 +142,7 @@ const SYSTEM_PROMPT = [
   '',
   'TONO Y FORMATO:',
   '- Respuestas de 2-4 líneas. Pregunta solo si es necesaria.',
-  '- Sin frases vacías: "¡Claro!", "Por supuesto", "¿En qué más puedo ayudarte?".',
+  '- Sin frases vacías ni muletillas: "¡Claro!", "Por supuesto", "¿En qué más puedo ayudarte?", "Perfecto", "Para ayudarte mejor".',
   '- Sin emojis salvo que el contacto los use primero.',
   '',
   'NUNCA:',
