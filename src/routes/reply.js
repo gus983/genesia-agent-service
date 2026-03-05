@@ -198,10 +198,31 @@ export function replyRouter() {
         [wa_id]
       );
       const contactType = ctRes.rows?.[0]?.contact_type || 'unknown';
-      const verifiedDoctor = ctRes.rows?.[0]?.verified_doctor === true;
+      let verifiedDoctor = ctRes.rows?.[0]?.verified_doctor === true;
+      let intentEff = intent;
+
+      // Post-gate confirmation: if last outbound was the honorarium gate question and
+      // the contact is now confirming they're a doctor, verify them and restore intent.
+      if (!verifiedDoctor && /\b(s[ií]|soy|obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
+        const { rows: lastOut } = await client.query(
+          `SELECT meta FROM messages
+           WHERE wa_id = $1 AND direction = 'out'
+           ORDER BY created_at DESC LIMIT 1`,
+          [wa_id]
+        );
+        if (lastOut[0]?.meta?.rule === 'honorarium_gate_v2') {
+          await client.query(
+            `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
+            [wa_id]
+          );
+          verifiedDoctor = true;
+          intentEff = 'honorarium';
+          console.log(`gate_confirmed wa_id=...${String(wa_id).slice(-6)}`);
+        }
+      }
 
       // Honorarium hard guardrail — must be verified doctor
-      if (intent === 'honorarium' && !verifiedDoctor) {
+      if (intentEff === 'honorarium' && !verifiedDoctor) {
         const replyText = '¿Sos obstetra/ginecólogo/médico?';
 
         await client.query(
@@ -228,7 +249,7 @@ export function replyRouter() {
 
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
-        [wa_id, userText, { source: 'wa-bridge', intent, inferredMarket, inferredInterest }]
+        [wa_id, userText, { source: 'wa-bridge', intent: intentEff, inferredMarket, inferredInterest }]
       );
 
       // Fetch KB (market-specific + global)
@@ -243,7 +264,7 @@ export function replyRouter() {
 
       // Build user prompt as clean sections
       const contactLabel = contactType === 'unknown' ? 'desconocido' : contactType;
-      const doctorLabel = verifiedDoctor ? 'sí (verificado)' : 'no';
+      const doctorLabel = verifiedDoctor ? 'sí (verificado)' : 'no'; // verifiedDoctor may have been updated by post-gate check
 
       const userPrompt = [
         '## Contacto',
@@ -269,7 +290,7 @@ export function replyRouter() {
           'Convertí la instrucción del equipo en un mensaje natural para el contacto. Mantené el tono y rol de Valeria. No copies la instrucción textualmente.',
         ] : [
           '---',
-          intent === 'case_status'
+          intentEff === 'case_status'
             ? '⚠️ INSTRUCCIÓN IMPERATIVA: El contacto pregunta sobre un caso o paciente específico. Valeria NO tiene acceso a datos de casos. Debés comenzar tu respuesta con [ESCALAR] obligatoriamente. No hagas preguntas adicionales — decile que lo vas a consultar con el equipo.'
             : 'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
         ]),
