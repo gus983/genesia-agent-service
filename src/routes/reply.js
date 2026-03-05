@@ -52,12 +52,12 @@ function classifyInterest(text = '') {
 
 function extractIntent(text = '') {
   const t = String(text).toLowerCase();
+  // case_status before honorarium: "no me pagaron" on a specific case should escalate, not hit the gate
+  if (/\b(mi paciente|la paciente|su resultado|los resultados|se hizo|se lo hizo|se realiz[oó]|hizo el test|su test|estado del caso|cu[aá]ndo sale|cu[aá]ndo est[aá]|ya tiene|ya sali[oó]|consult[ao] por un caso|por un caso|un caso|les? deriv[eé]|deriv[eé] a|no me lleg[oó]|no lleg[oó]|no me pag[ao]ron|no me mandaron)\b/.test(t)) return 'case_status';
   if (/\b(precio|precios|cu[aá]nto|cuanto|valor|costo|costos|tarifa|arancel)\b/.test(t)) return 'pricing';
   if (/\b(opciones|opci(o|ó)n|tests?|men[uú]|alternativas)\b/.test(t)) return 'options';
   if (/\b(proceso|procedimiento|log[ií]stica|pasos|turno|muestra|toma|resultado|entrega)\b/.test(t)) return 'procedure';
   if (/\b(honorario|honorarios|comisi(o|ó)n|comisiones)\b/.test(t)) return 'honorarium';
-  // Specific case/patient inquiry — always requires escalation
-  if (/\b(mi paciente|la paciente|su resultado|los resultados|se hizo|se realiz[oó]|hizo el test|su test|estado del caso|cu[aá]ndo sale|cu[aá]ndo est[aá]|ya tiene|ya sali[oó])\b/.test(t)) return 'case_status';
   return 'general';
 }
 
