@@ -166,16 +166,17 @@ export function replyRouter() {
   const r = express.Router();
 
   r.post('/', async (req, res) => {
-    const { wa_id, text, country } = req.body || {};
+    const { wa_id, text, country, admin_instruction } = req.body || {};
     if (!wa_id) return res.status(400).json({ ok: false, error: 'missing_wa_id' });
 
     const pool = getPool();
     const client = await pool.connect();
 
     const userText = String(text || '').trim();
+    const adminInstruction = admin_instruction ? String(admin_instruction).trim() : null;
     const inferredMarket = inferMarketFromWaId(wa_id);
     const inferredInterest = classifyInterest(userText);
-    const intent = extractIntent(userText);
+    const intent = adminInstruction ? 'admin_reply' : extractIntent(userText);
 
     try {
       await client.query('BEGIN');
@@ -259,10 +260,18 @@ export function replyRouter() {
         '## Mensaje actual',
         userText,
         '',
-        '---',
-        intent === 'case_status'
-          ? '⚠️ INSTRUCCIÓN IMPERATIVA: El contacto pregunta sobre un caso o paciente específico. Valeria NO tiene acceso a datos de casos. Debés comenzar tu respuesta con [ESCALAR] obligatoriamente. No hagas preguntas adicionales — decile que lo vas a consultar con el equipo.'
-          : 'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
+        ...(adminInstruction ? [
+          '## Instrucción del equipo Genesia',
+          adminInstruction,
+          '',
+          '---',
+          'Convertí la instrucción del equipo en un mensaje natural para el contacto. Mantené el tono y rol de Valeria. No copies la instrucción textualmente.',
+        ] : [
+          '---',
+          intent === 'case_status'
+            ? '⚠️ INSTRUCCIÓN IMPERATIVA: El contacto pregunta sobre un caso o paciente específico. Valeria NO tiene acceso a datos de casos. Debés comenzar tu respuesta con [ESCALAR] obligatoriamente. No hagas preguntas adicionales — decile que lo vas a consultar con el equipo.'
+            : 'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
+        ]),
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
@@ -284,7 +293,7 @@ export function replyRouter() {
       // Log outbound
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
-        [wa_id, replyText, { provider: out.provider, ms: out.ms }]
+        [wa_id, replyText, { provider: out.provider, ms: out.ms, ...(shouldEscalate ? { escalated: true } : {}) }]
       );
 
       await client.query('COMMIT');
