@@ -10,14 +10,6 @@ function inferMarketFromWaId(wa_id = '') {
   return null;
 }
 
-function classifyContactType(text = '') {
-  const t = String(text).toLowerCase();
-  if (/\b(dra\.?|dr\.?|doctora|doctor|obstetra|ginec(o|ó)logo)\b/.test(t)) return 'medico';
-  if (/\b(cl[ií]nica|hospital|instituci(o|ó)n|laboratorio|centro m(e|é)dico)\b/.test(t)) return 'institucion';
-  if (/\b(embarazad|mi embarazo|estoy embarazada|paciente|mi beb(e|é))\b/.test(t)) return 'paciente';
-  return 'unknown';
-}
-
 function contextDays() {
   const n = Number(process.env.CONTEXT_DAYS || 60);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 365) : 60;
@@ -66,35 +58,6 @@ function extractIntent(text = '') {
   return 'general';
 }
 
-async function fetchKnowledgeItem(client, { domain, kind, market, key }) {
-  const { rows } = await client.query(
-    `SELECT data, updated_at
-     FROM knowledge_items
-     WHERE domain=$1 AND kind=$2 AND key=$3 AND market IS NOT DISTINCT FROM $4
-     LIMIT 1`,
-    [domain, kind, key, market]
-  );
-  return rows[0] || null;
-}
-
-const SYSTEM_PROMPT = [
-  "Sos Valeria, especialista en implementación de NIPT para obstetras (Genesia).",
-  "Tono: breve, profesional, claro. Un bloque conceptual por mensaje.",
-  "Objetivo: ayudar a incorporar NIPT de forma simple, segura y profesional; mover 1 etapa por conversación con 1 pregunta concreta.",
-  "Nunca prometas certezas: NIPT es screening, no diagnóstico.",
-  "Si no tenés un dato específico, decilo con honestidad y pedí 1 dato para poder confirmarlo (ej. ciudad).",
-].join('\n');
-
-function kbMaxItems() {
-  const n = Number(process.env.KB_MAX_ITEMS || 50);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 200) : 50;
-}
-
-function kbMaxJsonChars() {
-  const n = Number(process.env.KB_MAX_JSON_CHARS || 25000);
-  return Number.isFinite(n) && n > 1000 ? Math.min(n, 200000) : 25000;
-}
-
 async function fetchIncludeKinds(client, { domain }) {
   const { rows } = await client.query(
     `SELECT data
@@ -107,8 +70,18 @@ async function fetchIncludeKinds(client, { domain }) {
   const kinds = rows?.[0]?.data?.kinds;
   if (Array.isArray(kinds) && kinds.length) return kinds.map(k => String(k).trim()).filter(Boolean);
 
-  // safe default if config missing
-  return ['pricing', 'product_specs', 'logistics', 'faq', 'scripts'];
+  // safe default — no scripts: principles live in system prompt, not DB
+  return ['pricing', 'product_specs', 'logistics', 'faq'];
+}
+
+function kbMaxItems() {
+  const n = Number(process.env.KB_MAX_ITEMS || 50);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 200) : 50;
+}
+
+function kbMaxJsonChars() {
+  const n = Number(process.env.KB_MAX_JSON_CHARS || 25000);
+  return Number.isFinite(n) && n > 1000 ? Math.min(n, 200000) : 25000;
 }
 
 async function fetchKnowledgeBundle(client, { domain, market }) {
@@ -129,13 +102,53 @@ async function fetchKnowledgeBundle(client, { domain, market }) {
   return rows;
 }
 
-function trimJsonForPrompt(obj) {
+function formatKnowledgeBundle(rows) {
+  if (!rows.length) return '(sin información disponible)';
   const maxChars = kbMaxJsonChars();
-  const s = JSON.stringify(obj, null, 2);
-  if (s.length <= maxChars) return s;
-  return s.slice(0, maxChars) + `\n... (truncated to ${maxChars} chars)`;
+
+  let result = rows.map(k => {
+    const scope = k.market || 'global';
+    const header = `### ${k.kind} / ${k.key} [${scope}]`;
+    const body =
+      typeof k.data?.text === 'string' ? k.data.text :
+      typeof k.data?.content === 'string' ? k.data.content :
+      JSON.stringify(k.data, null, 2);
+    return `${header}\n${body}`;
+  }).join('\n\n');
+
+  if (result.length > maxChars) result = result.slice(0, maxChars) + '\n... (truncado)';
+  return result;
 }
 
+const SYSTEM_PROMPT = [
+  'Sos Valeria, asesora clínica de Genesia especializada en NIPT y oncología molecular.',
+  '',
+  'ROL: Especialista par, no vendedora. Con médicos: de igual a igual, lenguaje clínico. Con pacientes: cálida y directa, sin tecnicismos.',
+  '',
+  'OBJETIVO POR MENSAJE: avanzar exactamente 1 etapa en la conversación. Cerrar con exactamente 1 pregunta concreta. Nunca dos preguntas en el mismo mensaje.',
+  '',
+  'COMPORTAMIENTO SEGÚN TIPO DE CONTACTO:',
+  '- medico_derivador (verificado): logística, derivación, cobertura, honorarios si el médico los menciona.',
+  '- medico_derivador (no verificado): igual, pero el sistema ya bloqueó la consulta de honorarios — no menciones ese tema.',
+  '- paciente: explicar NIPT en lenguaje simple, orientar a consultar con su obstetra.',
+  '- institucion: convenio, volumen, integración operativa.',
+  '- unknown: entender primero quién es y qué busca antes de dar información.',
+  '',
+  'PRINCIPIOS CLÍNICOS:',
+  '- NIPT es screening, no diagnóstico. Nunca garantizar resultados.',
+  '- Ante incertidumbre, pedir exactamente 1 dato para poder confirmar.',
+  '- Usar el historial para no repetir preguntas ya respondidas.',
+  '',
+  'TONO Y FORMATO:',
+  '- Respuestas de 2-4 líneas + 1 pregunta.',
+  '- Sin frases vacías: "¡Claro!", "Por supuesto", "¿En qué más puedo ayudarte?".',
+  '- Sin emojis salvo que el contacto los use primero.',
+  '',
+  'NUNCA:',
+  '- Prometer certezas clínicas.',
+  '- Revelar honorarios o comisiones a contactos no verificados.',
+  '- Hacer dos preguntas en el mismo mensaje.',
+].join('\n');
 
 export function replyRouter() {
   const r = express.Router();
@@ -149,44 +162,41 @@ export function replyRouter() {
 
     const userText = String(text || '').trim();
     const inferredMarket = inferMarketFromWaId(wa_id);
-    const inferredContactType = classifyContactType(userText);
     const inferredInterest = classifyInterest(userText);
     const intent = extractIntent(userText);
 
     try {
       await client.query('BEGIN');
 
-      // Upsert contact
+      // Upsert contact (minimal — classification is done by wa-bridge)
       await client.query(
-        `INSERT INTO contacts (wa_id, country, contact_type, updated_at)
-         VALUES ($1, $2, $3, now())
+        `INSERT INTO contacts (wa_id, country, updated_at)
+         VALUES ($1, $2, now())
          ON CONFLICT (wa_id) DO UPDATE SET
            country = COALESCE(EXCLUDED.country, contacts.country),
-           contact_type = CASE
-             WHEN contacts.contact_type = 'unknown' AND EXCLUDED.contact_type <> 'unknown' THEN EXCLUDED.contact_type
-             ELSE contacts.contact_type
-           END,
            updated_at = now()`,
-        [wa_id, country || inferredMarket || null, inferredContactType]
+        [wa_id, country || inferredMarket || null]
       );
 
-      // If asking for honorarium and not confirmed as doctor: be subtle (no mention of honorarios/tables)
-      if (intent === 'honorarium') {
-        const ctRes = await client.query(`SELECT contact_type FROM contacts WHERE wa_id=$1`, [wa_id]);
-        const contactType = ctRes.rows?.[0]?.contact_type || inferredContactType || 'unknown';
+      // Read contact state once — reuse for gate + facts
+      const ctRes = await client.query(
+        `SELECT contact_type, verified_doctor FROM contacts WHERE wa_id = $1 LIMIT 1`,
+        [wa_id]
+      );
+      const contactType = ctRes.rows?.[0]?.contact_type || 'unknown';
+      const verifiedDoctor = ctRes.rows?.[0]?.verified_doctor === true;
 
-        if (contactType !== 'medico') {
-          const replyText = 'Perfecto. Para ayudarte mejor: ¿sos profesional de la salud? ¿Tu nombre y ciudad?';
+      // Honorarium hard guardrail — must be verified doctor
+      if (intent === 'honorarium' && !verifiedDoctor) {
+        const replyText = '¿Sos obstetra/ginecólogo/médico?';
 
-          // Log outbound
-          await client.query(
-            `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
-            [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v1' }]
-          );
+        await client.query(
+          `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
+          [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v2' }]
+        );
 
-          await client.query('COMMIT');
-          return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
-        }
+        await client.query('COMMIT');
+        return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
       }
 
       // Minimal state update
@@ -200,55 +210,47 @@ export function replyRouter() {
       }
 
       // Log inbound
-      await client.query(
-        `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
-        [wa_id, userText, { source: 'wa-bridge', intent, inferredMarket, inferredContactType, inferredInterest }]
-      );
-
-      // Fetch relevant facts (KB)
       const market = inferredMarket || (country ? String(country).toUpperCase() : null);
 
-      const facts = {
-        market,
-        contact_type: inferredContactType,
-        interest: inferredInterest,
-        intent,
-      };
+      await client.query(
+        `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
+        [wa_id, userText, { source: 'wa-bridge', intent, inferredMarket, inferredInterest }]
+      );
 
-      // Generic KB bundle (market-specific + global)
+      // Fetch KB (market-specific + global)
       const domain = inferredInterest === 'cancer' ? 'cancer' : 'nipt';
-      const knowledgeBundle = await fetchKnowledgeBundle(client, { domain, market });
+      const knowledgeRows = await fetchKnowledgeBundle(client, { domain, market });
+      const knowledgeMarkdown = formatKnowledgeBundle(knowledgeRows);
 
-      facts.knowledge_bundle = knowledgeBundle.map((k) => ({
-        domain: k.domain,
-        kind: k.kind,
-        market: k.market,
-        key: k.key,
-        updated_at: k.updated_at,
-        data: k.data
-      }));
-
-         // Build user prompt with facts + recent transcript
+      // Fetch transcript
       const transcriptLines = await fetchRecentTranscript(client, wa_id);
 
+      // Build user prompt as clean sections
+      const contactLabel = contactType === 'unknown' ? 'desconocido' : contactType;
+      const doctorLabel = verifiedDoctor ? 'sí (verificado)' : 'no';
+
       const userPrompt = [
-        `Mensaje actual: ${userText}`,
+        '## Contacto',
+        `- Tipo: ${contactLabel}`,
+        `- Médico verificado: ${doctorLabel}`,
+        `- Market: ${market || 'desconocido'}`,
+        `- Interés detectado: ${inferredInterest}`,
         '',
-        `Transcript reciente (últimos ${contextDays()} días, máx ${contextMaxMessages()} mensajes):`,
-        transcriptLines.length ? transcriptLines.join('\n') : '(sin historial)',
+        `## Historial reciente (últimos ${contextDays()} días, máx ${contextMaxMessages()} mensajes)`,
+        transcriptLines.length ? transcriptLines.join('\n') : '(sin historial previo)',
         '',
-        'Contexto (facts JSON):',
-        trimJsonForPrompt(facts),
+        '## Conocimiento disponible',
+        knowledgeMarkdown,
         '',
-        'Instrucciones:',
-        '- Respondé natural, breve y profesional.',
-        '- Si el usuario pregunta precios u opciones: usar nipt_pricing si está presente.',
-        '- Honorarios médicos: solo mencionarlos si contact_type == "medico". Si no, pedir confirmación sin mencionar honorarios/tablas.',
-        '- Cerrá con 1 pregunta concreta para avanzar.'
+        '## Mensaje actual',
+        userText,
+        '',
+        '---',
+        'Respondé según tu rol y el historial. Cerrá con exactamente 1 pregunta. Sin frases vacías.',
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
-      const replyText = String(out?.text || '').trim() || 'Gracias. ¿En qué ciudad estás y si es para una paciente o para tu práctica médica?';
+      const replyText = String(out?.text || '').trim() || '¿En qué puedo ayudarte hoy?';
 
       // Log outbound
       await client.query(
