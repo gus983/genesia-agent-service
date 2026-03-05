@@ -209,7 +209,7 @@ export function replyRouter() {
         );
 
         await client.query('COMMIT');
-        return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
+        return res.json({ ok: true, reply: replyText, escalated: false, action: { kind: 'text' } });
       }
 
       // Minimal state update
@@ -298,7 +298,7 @@ export function replyRouter() {
 
       await client.query('COMMIT');
 
-      return res.json({ ok: true, reply: replyText, action: { kind: 'text' } });
+      return res.json({ ok: true, reply: replyText, escalated: shouldEscalate, action: { kind: 'text' } });
     } catch (e) {
       await client.query('ROLLBACK');
       console.error('reply failed:', e?.message || e);

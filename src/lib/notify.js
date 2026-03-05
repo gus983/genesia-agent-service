@@ -1,5 +1,15 @@
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0';
 
+// Rate limit: one notification per wa_id per N minutes
+const NOTIFY_RATE_LIMIT_MS = Number(process.env.NOTIFY_RATE_LIMIT_MS || 5 * 60 * 1000);
+const _lastNotified = new Map(); // wa_id -> timestamp
+
+function isRateLimited(wa_id) {
+  const last = _lastNotified.get(wa_id);
+  if (!last) return false;
+  return (Date.now() - last) < NOTIFY_RATE_LIMIT_MS;
+}
+
 async function sendWhatsAppText(to, body) {
   const token = process.env.WA_TOKEN;
   const phoneNumberId = process.env.PHONE_NUMBER_ID;
@@ -43,6 +53,12 @@ export async function notifyAdmin({ wa_id, userText, replyText }) {
     console.warn('notifyAdmin: ADMIN_NUMBER not set, skipping');
     return;
   }
+
+  if (isRateLimited(wa_id)) {
+    console.log(`notifyAdmin: rate limited for ...${String(wa_id).slice(-6)}, skipping`);
+    return;
+  }
+  _lastNotified.set(wa_id, Date.now());
 
   const preview = (s, max = 220) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
   const maskedId = String(wa_id).slice(-6);
