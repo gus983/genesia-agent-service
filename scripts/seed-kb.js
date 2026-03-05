@@ -316,7 +316,7 @@ async function seed() {
       await client.query(
         `INSERT INTO knowledge_items (domain, kind, market, key, data)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (domain, kind, market, key)
+         ON CONFLICT (domain, kind, COALESCE(market, '__GLOBAL__'), key)
          DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
         [it.domain, it.kind, it.market, it.key, JSON.stringify(it.data)]
       );
