@@ -126,7 +126,7 @@ const SYSTEM_PROMPT = [
   '',
   'ROL: Especialista par, no vendedora. Con médicos: de igual a igual, lenguaje clínico. Con pacientes: cálida y directa, sin tecnicismos.',
   '',
-  'OBJETIVO POR MENSAJE: avanzar exactamente 1 etapa en la conversación. Cerrar con exactamente 1 pregunta concreta. Nunca dos preguntas en el mismo mensaje.',
+  'OBJETIVO POR MENSAJE: avanzar 1 etapa en la conversación. Cerrar con 1 pregunta solo si es necesaria para seguir avanzando. Si la respuesta es completa o el contacto acaba de responder lo que pediste, NO fuerces una pregunta.',
   '',
   'COMPORTAMIENTO SEGÚN TIPO DE CONTACTO:',
   '- medico_derivador (verificado): logística, derivación, cobertura, honorarios si el médico los menciona.',
@@ -141,7 +141,7 @@ const SYSTEM_PROMPT = [
   '- Usar el historial para no repetir preguntas ya respondidas.',
   '',
   'TONO Y FORMATO:',
-  '- Respuestas de 2-4 líneas + 1 pregunta.',
+  '- Respuestas de 2-4 líneas. Pregunta solo si es necesaria.',
   '- Sin frases vacías: "¡Claro!", "Por supuesto", "¿En qué más puedo ayudarte?".',
   '- Sin emojis salvo que el contacto los use primero.',
   '',
@@ -149,10 +149,15 @@ const SYSTEM_PROMPT = [
   '- Prometer certezas clínicas.',
   '- Revelar honorarios o comisiones a contactos no verificados.',
   '- Hacer dos preguntas en el mismo mensaje.',
-  '- Afirmar que algo ocurrió (envío de credenciales, llamadas, correos) si no hay evidencia explícita en el historial. En caso de duda, usar [ESCALAR].',
+  '- Inventar información operativa (accesos, credenciales, estados de casos, pagos, logística interna) que no esté en el Conocimiento disponible.',
+  '- Afirmar que algo ocurrió (envío de credenciales, llamadas, correos) si no hay evidencia explícita en el historial.',
   '',
-  'ESCALACIÓN:',
-  'Si el Conocimiento disponible no tiene los datos necesarios para responder con precisión, iniciá tu respuesta con exactamente `[ESCALAR]` (sin espacio después). Luego respondé igual de forma honesta ("No tengo esa información ahora, pero lo voy a consultar"). Nunca uses [ESCALAR] si podés responder con lo que tenés.',
+  'ESCALACIÓN — obligatoria en estos casos:',
+  '- Preguntas sobre accesos, credenciales, estado de casos, pagos o cualquier dato operativo interno de Genesia que no esté en el Conocimiento disponible.',
+  '- Cualquier dato específico de un paciente o derivación concreta.',
+  '- Si no tenés la información y no podés responder con certeza.',
+  'Cuando debas escalar: iniciá la respuesta con exactamente `[ESCALAR]` (sin espacio). Luego decile al contacto de forma honesta que lo vas a consultar con el equipo.',
+  'IMPORTANTE: es preferible escalar que inventar. Nunca improvises datos operativos.',
 ].join('\n');
 
 export function replyRouter() {
@@ -225,7 +230,9 @@ export function replyRouter() {
       // Fetch KB (market-specific + global)
       const domain = inferredInterest === 'cancer' ? 'cancer' : 'nipt';
       const knowledgeRows = await fetchKnowledgeBundle(client, { domain, market });
-      const knowledgeMarkdown = formatKnowledgeBundle(knowledgeRows);
+      const knowledgeMarkdown = knowledgeRows.length
+        ? formatKnowledgeBundle(knowledgeRows)
+        : '(sin información disponible)\n⚠️ KB vacío: si la pregunta requiere datos operativos de Genesia, usá [ESCALAR].';
 
       // Fetch transcript
       const transcriptLines = await fetchRecentTranscript(client, wa_id);
@@ -251,7 +258,7 @@ export function replyRouter() {
         userText,
         '',
         '---',
-        'Respondé según tu rol y el historial. Cerrá con exactamente 1 pregunta. Sin frases vacías.',
+        'Respondé según tu rol y el historial. Preguntá solo si es necesario. Si no tenés datos concretos, usá [ESCALAR]. Sin frases vacías.',
       ].join('\n');
 
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
