@@ -75,6 +75,42 @@ Tu tarea: analizar reportes de simulación de Valeria (asesora clínica de Genes
 ${systemPrompt}
 \`\`\`
 
+## Contexto del sistema — LEER ANTES DE EVALUAR
+
+**Gate de honorarios (comportamiento correcto):**
+Cuando un contacto pregunta por honorarios o comisiones y aún no está verificado como médico
+(verified_doctor=false), Valeria responde "¿Sos obstetra/ginecólogo/médico?" — esto es
+CORRECTO por diseño. NO lo marques como gap de KB, ni como error, ni como falta de información.
+El sistema bloquea la respuesta antes del LLM: Valeria no puede revelar honorarios aunque los tuviera.
+Si el médico confirma, en el siguiente turno sí corresponde responder con la info de honorarios.
+
+**Precios de paneles vs. honorarios — distinción fundamental del negocio:**
+Los PRECIOS DE PANELES (lo que paga el paciente por el estudio) son PÚBLICOS. Valeria PUEDE y DEBE
+informarlos a cualquier contacto: médico, paciente directa, unknown, institución. NO marques como
+error que Valeria dé precios de paneles a una paciente o a un contacto no verificado.
+Solo son sensibles los HONORARIOS/COMISIONES DE DERIVACIÓN (lo que cobra el médico al derivar un
+paciente), que requieren verified_doctor=true. Si Valeria da precios de paneles a cualquier
+contacto → CORRECTO. Si da honorarios/comisiones a no-verificado → error (E-XX).
+
+**KB disponible en el sistema (knowledge_items):**
+El sistema tiene cargados en DB los siguientes datos — si Valeria los "inventa" en lugar de usarlos
+es un error de comportamiento (no un gap de KB):
+- pricing: tablas de precios por mercado (AR en USD, CO en COP, PE en PEN/USD)
+- product_specs: características clínicas de los 6 paneles NIPT
+- logistics: centros de extracción con dirección para AR (32 ciudades), CO (22 ciudades), PE (6 ciudades)
+- faq: proceso de derivación, timing, contacto operativo por mercado
+
+Si Valeria da información incorrecta sobre estos temas → error de comportamiento (E-XX).
+Si Valeria no tiene el dato y debería tenerlo pero no está en la lista anterior → gap real (G-XX).
+
+**DATO_FALTANTE — no existe en KB todavía:**
+- Honorarios reales por panel (montos o porcentajes)
+- Sensibilidad/especificidad por panel (datos de laboratorio)
+- Protocolo post-resultado positivo de Genesia
+- Descuentos por volumen / convenios institucionales
+- Flyer digital
+Si Valeria inventa cualquiera de estos → error de comportamiento. Si escala → comportamiento correcto.
+
 ## Reportes de simulación
 
 ${reportsBlock}
@@ -98,7 +134,7 @@ Analiza los reportes y produce un documento de propuestas con esta estructura EX
 [Lista de comportamientos incorrectos de Valeria, con qué persona/turno lo evidenció]
 
 ### Gaps de KB (información faltante)
-[Temas sobre los que Valeria no tenía datos suficientes y que se deberían agregar a knowledge_items]
+[Solo temas que NO están en la lista de KB disponible arriba. No incluir honorarios/pricing/logistics/specs/faq como gaps — esos datos existen en KB.]
 
 ### Errores de tono o formato
 [Frases prohibidas usadas, respuestas demasiado largas, dobles preguntas, etc.]

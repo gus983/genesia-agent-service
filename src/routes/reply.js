@@ -131,11 +131,16 @@ const SYSTEM_PROMPT = [
   'OBJETIVO POR MENSAJE: avanzar 1 etapa en la conversación.',
   '',
   'COMPORTAMIENTO SEGÚN TIPO DE CONTACTO:',
-  '- medico_derivador (verificado): logística, derivación, cobertura, honorarios si el médico los menciona.',
-  '- medico_derivador (no verificado): igual, pero el sistema ya bloqueó la consulta de honorarios — no menciones ese tema.',
-  '- paciente: explicar NIPT en lenguaje simple, orientar a consultar con su obstetra. Nunca mencionés honorarios ni comisiones.',
-  '- institucion: convenio, volumen, integración operativa.',
-  '- unknown: entender primero quién es y qué busca antes de dar información.',
+  '- medico_derivador (verificado): logística, derivación, cobertura, honorarios y comisiones si el médico los menciona.',
+  '- medico_derivador (no verificado): igual que verificado, excepto honorarios/comisiones — el sistema ya bloqueó esa consulta.',
+  '- paciente: NIPT en lenguaje simple, orientar a su obstetra. Precios de paneles sí podés darlos (son públicos). Nunca mencionés honorarios ni comisiones médicas.',
+  '- institucion: convenio, volumen, integración operativa. Precios de lista sí; descuentos o condiciones especiales → [ESCALAR].',
+  '- unknown: entender primero quién es y qué busca. Precios de paneles sí podés darlos. Si pide honorarios/comisiones y no está verificado, pedile que confirme su especialidad antes de dar esa información.',
+  '',
+  'REGLA DE ORO — PRECIOS vs. HONORARIOS:',
+  '- Precios de paneles (lo que paga el paciente): PÚBLICOS. Informarlos a cualquier contacto con la moneda del mercado correcto.',
+  '- Honorarios/comisiones de derivación (lo que cobra el médico): RESTRINGIDOS. Solo a médicos verificados.',
+  '- Descuentos por volumen, convenios institucionales: SIEMPRE [ESCALAR], sin excepción.',
   '',
   'LENGUAJE SEGÚN MERCADO:',
   '- AR: tuteo con voseo ("¿querés?", "contame", "sí").',
@@ -180,6 +185,7 @@ const SYSTEM_PROMPT = [
   '- Preguntas sobre descuentos por volumen, convenios institucionales o condiciones comerciales especiales.',
   '- Si no tenés el dato y no podés responder con certeza.',
   'Cuando debas escalar: iniciá la respuesta con exactamente `[ESCALAR]` (sin espacio). Luego decile al contacto de forma honesta que lo vas a consultar con el equipo.',
+  'Si ya escalaste la misma consulta en el turno anterior y el contacto vuelve sin respuesta del equipo: no repitas el mismo mensaje. Reconocé la demora, ofrecé un canal alternativo si lo tenés en el Conocimiento disponible (email/teléfono del equipo), y pedí paciencia.',
   'NO escalés saludos de cierre ni mensajes de cortesía ("gracias", "hasta luego", "fue un placer").',
   'IMPORTANTE: es preferible escalar que inventar. Nunca improvises datos operativos.',
 ].join('\n');
@@ -324,15 +330,15 @@ export function replyRouter() {
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
       let rawText = String(out?.text || '').trim();
 
-      // Detect escalation signal and strip it before sending to user
-      const shouldEscalate = rawText.startsWith('[ESCALAR]');
+      // Detect escalation signal (anywhere in text) and strip all occurrences before sending to user
+      const shouldEscalate = /\[ESCALAR\]/.test(rawText);
       const replyText = shouldEscalate
-        ? rawText.replace(/^\[ESCALAR\]\s*/, '').trim()
+        ? rawText.replace(/\[ESCALAR\]\s*/g, '').trim()
         : rawText || '¿En qué puedo ayudarte hoy?';
 
       // Fire-and-forget admin notification
       if (shouldEscalate) {
-        notifyAdmin({ wa_id, userText, replyText }).catch(e =>
+        notifyAdmin({ wa_id, userText, replyText, intent: intentEff }).catch(e =>
           console.error('notifyAdmin failed:', e?.message || e)
         );
       }

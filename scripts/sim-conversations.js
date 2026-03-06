@@ -26,7 +26,7 @@ const AGENT_URL = process.env.AGENT_URL || 'http://localhost:4020';
 const PERSONAS = [
   {
     id: 'medico_ar_honorarios',
-    wa_id: 'sim000000000001',
+    wa_id: '5490000000001',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 7,
@@ -41,7 +41,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_logistica',
-    wa_id: 'sim000000000002',
+    wa_id: '5490000000002',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 6,
@@ -56,7 +56,7 @@ const PERSONAS = [
   },
   {
     id: 'contacto_desconocido_a_medico',
-    wa_id: 'sim000000000003',
+    wa_id: '5490000000003',
     contact_type: 'unknown',
     market: 'AR',
     max_turns: 8,
@@ -71,7 +71,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_preguntas_clinicas',
-    wa_id: 'sim000000000004',
+    wa_id: '5490000000004',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 7,
@@ -86,7 +86,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_consulta_caso',
-    wa_id: 'sim000000000005',
+    wa_id: '5490000000005',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 5,
@@ -101,7 +101,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_co_logistica',
-    wa_id: 'sim000000000006',
+    wa_id: '5730000000006',
     contact_type: 'medico_derivador',
     market: 'CO',
     max_turns: 6,
@@ -116,7 +116,7 @@ const PERSONAS = [
   },
   {
     id: 'institucion_ar',
-    wa_id: 'sim000000000007',
+    wa_id: '5490000000007',
     contact_type: 'institucion',
     market: 'AR',
     max_turns: 6,
@@ -131,7 +131,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_rechazo_cierre',
-    wa_id: 'sim000000000008',
+    wa_id: '5490000000008',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 6,
@@ -149,7 +149,7 @@ const PERSONAS = [
 
   {
     id: 'medico_pe_precios',
-    wa_id: 'sim000000000009',
+    wa_id: '5190000000009',
     contact_type: 'medico_derivador',
     market: 'PE',
     max_turns: 6,
@@ -164,7 +164,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_gemelos',
-    wa_id: 'sim000000000010',
+    wa_id: '5490000000010',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 6,
@@ -179,7 +179,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_semanas_bajas',
-    wa_id: 'sim000000000011',
+    wa_id: '5490000000011',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 6,
@@ -194,7 +194,7 @@ const PERSONAS = [
   },
   {
     id: 'contacto_paciente_directo',
-    wa_id: 'sim000000000012',
+    wa_id: '5490000000012',
     contact_type: 'unknown',
     market: 'AR',
     max_turns: 7,
@@ -210,7 +210,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_pago_efectivo',
-    wa_id: 'sim000000000013',
+    wa_id: '5490000000013',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 5,
@@ -225,7 +225,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_resultados_negativos',
-    wa_id: 'sim000000000014',
+    wa_id: '5490000000014',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 6,
@@ -240,7 +240,7 @@ const PERSONAS = [
   },
   {
     id: 'medico_ar_multiples_temas',
-    wa_id: 'sim000000000015',
+    wa_id: '5490000000015',
     contact_type: 'medico_derivador',
     market: 'AR',
     max_turns: 8,

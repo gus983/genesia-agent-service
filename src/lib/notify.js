@@ -45,9 +45,9 @@ async function sendWhatsAppText(to, body) {
  * Notify admin via WhatsApp when Valeria can't answer.
  * Fire-and-forget — caller should not await.
  *
- * @param {{ wa_id: string, userText: string, replyText: string }} opts
+ * @param {{ wa_id: string, userText: string, replyText: string, intent?: string }} opts
  */
-export async function notifyAdmin({ wa_id, userText, replyText }) {
+export async function notifyAdmin({ wa_id, userText, replyText, intent }) {
   const adminNumber = process.env.ADMIN_NUMBER;
   if (!adminNumber) {
     console.warn('notifyAdmin: ADMIN_NUMBER not set, skipping');
@@ -61,10 +61,13 @@ export async function notifyAdmin({ wa_id, userText, replyText }) {
   _lastNotified.set(wa_id, Date.now());
 
   const preview = (s, max = 220) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
-  const maskedId = String(wa_id).slice(-6);
+  const phone = String(wa_id).replace(/^\+/, '');
+  const intentLabel = intent ? ` — motivo: ${intent}` : '';
 
   const msg = [
-    `*Valeria necesita ayuda* (ID: ...${maskedId})`,
+    `*Valeria escaló*${intentLabel}`,
+    `*Contacto:* +${phone}`,
+    `https://wa.me/${phone}`,
     '',
     `*Pregunta:* ${preview(userText)}`,
     '',
