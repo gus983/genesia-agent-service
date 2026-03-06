@@ -21,7 +21,7 @@ export async function claudeReply({ system, user, model }) {
     },
     body: JSON.stringify({
       model: m,
-      max_tokens: 320,
+      max_tokens: 600,
       system,
       messages: [{ role: 'user', content: user }],
     }),
@@ -71,7 +71,7 @@ export async function openaiReply({ system, user, model }) {
         { role: 'system', content: system },
         { role: 'user', content: user },
       ],
-      max_output_tokens: 320,
+      max_output_tokens: 600,
     }),
   });
 
