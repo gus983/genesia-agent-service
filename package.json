@@ -12,6 +12,7 @@
     "lint": "node -c src/server.js && node -c src/app.js && node -c src/db/index.js && node -c src/db/migrate.js && node -c src/routes/reply.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "express": "^4.19.2",
     "pg": "^8.13.1"
   }
