@@ -1,7 +1,7 @@
 import express from 'express';
 import { getPool } from '../db/index.js';
 import { llmReply } from '../lib/llm.js';
-import { notifyAdmin } from '../lib/notify.js';
+import { notifyAdmin, notifyAdminReport } from '../lib/notify.js';
 
 function inferMarketFromWaId(wa_id = '') {
   const s = String(wa_id).replace(/^\+/, '');
@@ -231,7 +231,7 @@ export function replyRouter() {
       // Doctor self-identification: if contact says they're a doctor in any context, verify them.
       // Also restore 'honorarium' intent if the hard gate was the last message (so the LLM answers
       // the original pricing question instead of defaulting to generic info).
-      if (!verifiedDoctor && /\b(soy|s[ií][\s,]+soy|obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
+      if (!verifiedDoctor && /\b(obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
         await client.query(
           `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
           [wa_id]
@@ -239,18 +239,29 @@ export function replyRouter() {
         verifiedDoctor = true;
         console.log(`doctor_self_identified wa_id=...${String(wa_id).slice(-6)}`);
 
-        // If the last outbound was the hard gate, restore honorarium intent
+        // If the last outbound was the hard gate AND it's recent, restore honorarium intent
         const { rows: lastOut } = await client.query(
-          `SELECT meta FROM messages
+          `SELECT meta, created_at FROM messages
            WHERE wa_id = $1 AND direction = 'out'
            ORDER BY created_at DESC LIMIT 1`,
           [wa_id]
         );
-        if (lastOut[0]?.meta?.rule === 'honorarium_gate_v2') {
+        const GATE_TTL_MS = 30 * 60 * 1000;
+        const gateAge = Date.now() - new Date(lastOut[0]?.created_at || 0).getTime();
+        if (lastOut[0]?.meta?.rule === 'honorarium_gate_v2' && gateAge < GATE_TTL_MS) {
           intentEff = 'honorarium';
           console.log(`gate_confirmed wa_id=...${String(wa_id).slice(-6)}`);
         }
       }
+
+      // Detect if last outbound was admin-triggered — report back after this reply
+      const { rows: lastOutRows } = await client.query(
+        `SELECT meta FROM messages
+         WHERE wa_id = $1 AND direction = 'out'
+         ORDER BY created_at DESC LIMIT 1`,
+        [wa_id]
+      );
+      const pendingAdminReport = !adminInstruction && lastOutRows[0]?.meta?.admin_triggered === true;
 
       // Honorarium hard guardrail — must be verified doctor
       if (intentEff === 'honorarium' && !verifiedDoctor) {
@@ -343,10 +354,20 @@ export function replyRouter() {
         );
       }
 
+      // Fire-and-forget report-back to admin (active loop: lead responded to admin-triggered message)
+      if (pendingAdminReport) {
+        notifyAdminReport({ wa_id, leadText: userText, valeriaReply: replyText });
+      }
+
       // Log outbound
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
-        [wa_id, replyText, { provider: out.provider, ms: out.ms, ...(shouldEscalate ? { escalated: true } : {}) }]
+        [wa_id, replyText, {
+          provider: out.provider,
+          ms: out.ms,
+          ...(shouldEscalate ? { escalated: true } : {}),
+          ...(adminInstruction ? { admin_triggered: true } : {}),
+        }]
       );
 
       await client.query('COMMIT');

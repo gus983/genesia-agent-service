@@ -1,8 +1,12 @@
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0';
 
-// Rate limit: one notification per wa_id per N minutes
+// Rate limit: one escalation notification per wa_id per N minutes
 const NOTIFY_RATE_LIMIT_MS = Number(process.env.NOTIFY_RATE_LIMIT_MS || 5 * 60 * 1000);
 const _lastNotified = new Map(); // wa_id -> timestamp
+
+// Coalescing window for report-back notifications (ms)
+const REPORT_COALESCE_MS = Number(process.env.REPORT_COALESCE_MS || 45_000);
+const _pendingReports = new Map(); // wa_id -> { timer, countExtra, lastLeadText, lastValeriaReply }
 
 function isRateLimited(wa_id) {
   const last = _lastNotified.get(wa_id);
@@ -62,6 +66,7 @@ export async function notifyAdmin({ wa_id, userText, replyText, intent }) {
 
   const preview = (s, max = 220) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
   const phone = String(wa_id).replace(/^\+/, '');
+  const maskedId = String(wa_id).slice(-6);
   const intentLabel = intent ? ` — motivo: ${intent}` : '';
 
   const msg = [
@@ -74,6 +79,7 @@ export async function notifyAdmin({ wa_id, userText, replyText, intent }) {
     `*Lo que le dije:* ${preview(replyText)}`,
     '',
     `_Respondé este mensaje con la información y Valeria se la transmite al lead._`,
+    `_Si gestionás varios leads a la vez, mencioná el número al inicio de tu respuesta (ej: ${phone.slice(-8)}, decile que...)._`,
   ].join('\n');
 
   await sendWhatsAppText(adminNumber, msg);
@@ -94,4 +100,63 @@ export async function notifyAdmin({ wa_id, userText, replyText, intent }) {
       console.warn(`escalation_register_fail wa_id=...${maskedId} status=${r.status} body=${body.slice(0, 200)}`);
     }
   }).catch(e => console.warn(`escalation_register_fail wa_id=...${maskedId} err=${e?.message}`));
+}
+
+/**
+ * Report lead's response back to admin after an admin-triggered Valeria message.
+ * Coalesces rapid successive messages — fires once per REPORT_COALESCE_MS window of silence.
+ * Fire-and-forget — caller should not await.
+ *
+ * @param {{ wa_id: string, leadText: string, valeriaReply: string }} opts
+ */
+export function notifyAdminReport({ wa_id, leadText, valeriaReply }) {
+  const existing = _pendingReports.get(wa_id);
+  if (existing) {
+    clearTimeout(existing.timer);
+    existing.countExtra += 1;
+    existing.lastLeadText = leadText;
+    existing.lastValeriaReply = valeriaReply;
+    existing.timer = setTimeout(() => _flushAdminReport(wa_id), REPORT_COALESCE_MS);
+    console.log(`admin_report_coalesced wa_id=...${String(wa_id).slice(-6)} extra=${existing.countExtra}`);
+  } else {
+    const entry = {
+      countExtra: 0,
+      lastLeadText: leadText,
+      lastValeriaReply: valeriaReply,
+      timer: setTimeout(() => _flushAdminReport(wa_id), REPORT_COALESCE_MS),
+    };
+    _pendingReports.set(wa_id, entry);
+  }
+}
+
+async function _flushAdminReport(wa_id) {
+  const entry = _pendingReports.get(wa_id);
+  if (!entry) return;
+  _pendingReports.delete(wa_id);
+
+  const adminNumber = process.env.ADMIN_NUMBER;
+  if (!adminNumber) return;
+
+  const maskedId = String(wa_id).slice(-6);
+  const phone = String(wa_id).replace(/^\+/, '');
+  const preview = (s, max = 300) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+  const extraNote = entry.countExtra > 0
+    ? `\n_Lead envió ${entry.countExtra} mensaje(s) adicional(es) — mostrando el último._`
+    : '';
+
+  const msg = [
+    `*Valeria averiguó — respuesta del lead:*${extraNote}`,
+    `*Contacto:* +${phone}`,
+    `https://wa.me/${phone}`,
+    '',
+    `*Lo que dijo el lead:* ${preview(entry.lastLeadText)}`,
+    '',
+    `*Cómo respondió Valeria:* ${preview(entry.lastValeriaReply)}`,
+  ].join('\n');
+
+  console.log(`admin_report_flush wa_id=...${maskedId} extra=${entry.countExtra}`);
+  await sendWhatsAppText(adminNumber, msg).catch(e =>
+    console.error('admin_report_flush failed:', e?.message)
+  );
 }
