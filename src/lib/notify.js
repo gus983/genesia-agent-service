@@ -65,13 +65,15 @@ export async function notifyAdmin({ wa_id, userText, replyText, intent }) {
   const intentLabel = intent ? ` — motivo: ${intent}` : '';
 
   const msg = [
-    `*Valeria escaló*${intentLabel}`,
+    `*Valeria necesita tu respuesta*${intentLabel}`,
     `*Contacto:* +${phone}`,
     `https://wa.me/${phone}`,
     '',
-    `*Pregunta:* ${preview(userText)}`,
+    `*Pregunta del lead:* ${preview(userText)}`,
     '',
-    `*Respuesta dada:* ${preview(replyText)}`,
+    `*Lo que le dije:* ${preview(replyText)}`,
+    '',
+    `_Respondé este mensaje con la información y Valeria se la transmite al lead._`,
   ].join('\n');
 
   await sendWhatsAppText(adminNumber, msg);
