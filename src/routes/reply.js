@@ -276,15 +276,7 @@ export function replyRouter() {
         return res.json({ ok: true, reply: replyText, escalated: false, action: { kind: 'text' } });
       }
 
-      // Minimal state update
-      if (inferredInterest !== 'unknown') {
-        await client.query(
-          `INSERT INTO contact_state (wa_id, product_interest, updated_at)
-           VALUES ($1, $2, now())
-           ON CONFLICT (wa_id) DO UPDATE SET product_interest = EXCLUDED.product_interest, updated_at = now()`,
-          [wa_id, inferredInterest]
-        );
-      }
+      // product_interest and stage are updated in the CRM upsert after the LLM reply
 
       // Log inbound
       const market = inferredMarket || (country ? String(country).toUpperCase() : null);
@@ -369,6 +361,34 @@ export function replyRouter() {
           ...(adminInstruction ? { admin_triggered: true } : {}),
         }]
       );
+
+      // CRM: upsert contact_state with stage + product_interest (no-downgrade)
+      const STAGE_PRIORITY = ['frio','nuevo','en_dialogo','interesado','escalado','en_seguimiento','convertido'];
+      const { rows: csRows } = await client.query(
+        `SELECT stage FROM contact_state WHERE wa_id = $1`, [wa_id]
+      );
+      const currentStage = csRows[0]?.stage || null;
+      const candidateStage = (() => {
+        if (adminInstruction) return 'en_seguimiento';
+        if (shouldEscalate) return 'escalado';
+        if (['pricing','honorarium','options','procedure'].includes(intentEff)) return 'interesado';
+        return 'en_dialogo';
+      })();
+      const shouldUpdateStage =
+        !currentStage ||
+        (!['convertido','frio'].includes(currentStage) &&
+          STAGE_PRIORITY.indexOf(candidateStage) >= STAGE_PRIORITY.indexOf(currentStage));
+      if (shouldUpdateStage) {
+        await client.query(
+          `INSERT INTO contact_state (wa_id, stage, product_interest, updated_at)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (wa_id) DO UPDATE SET
+             stage = EXCLUDED.stage,
+             product_interest = COALESCE(EXCLUDED.product_interest, contact_state.product_interest),
+             updated_at = now()`,
+          [wa_id, candidateStage, inferredInterest !== 'unknown' ? inferredInterest : null]
+        ).catch(e => console.error('contact_state upsert failed:', e?.message));
+      }
 
       await client.query('COMMIT');
 
