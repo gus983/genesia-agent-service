@@ -2,6 +2,7 @@ import express from 'express';
 import { getPool } from '../db/index.js';
 import { llmReply } from '../lib/llm.js';
 import { notifyAdmin, notifyAdminReport } from '../lib/notify.js';
+import { parseMetaLead, leadToContactUpdate } from '../lib/parseMetaLead.js';
 
 function inferMarketFromWaId(wa_id = '') {
   const s = String(wa_id).replace(/^\+/, '');
@@ -209,15 +210,39 @@ export function replyRouter() {
     try {
       await client.query('BEGIN');
 
-      // Upsert contact (minimal — classification is done by wa-bridge)
-      await client.query(
-        `INSERT INTO contacts (wa_id, country, updated_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (wa_id) DO UPDATE SET
-           country = COALESCE(EXCLUDED.country, contacts.country),
-           updated_at = now()`,
-        [wa_id, country || inferredMarket || null]
-      );
+      // Detect Meta lead form payload and enrich contact before anything else
+      const metaLead = parseMetaLead(userText);
+      if (metaLead) {
+        const upd = leadToContactUpdate(metaLead);
+        await client.query(
+          `INSERT INTO contacts (wa_id, country, contact_type, verified_doctor, verification_source,
+              verification_confidence, name, email, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+           ON CONFLICT (wa_id) DO UPDATE SET
+             country               = COALESCE(contacts.country, EXCLUDED.country),
+             contact_type          = EXCLUDED.contact_type,
+             verified_doctor       = EXCLUDED.verified_doctor,
+             verification_source   = EXCLUDED.verification_source,
+             verification_confidence = EXCLUDED.verification_confidence,
+             name                  = COALESCE(contacts.name, EXCLUDED.name),
+             email                 = COALESCE(contacts.email, EXCLUDED.email),
+             updated_at            = now()`,
+          [wa_id, country || inferredMarket || null,
+           upd.contact_type, upd.verified_doctor, upd.verification_source,
+           upd.verification_confidence, upd.name, upd.email]
+        );
+        console.log(`meta_lead_enriched wa_id=...${String(wa_id).slice(-6)} type=${upd.contact_type}`);
+      } else {
+        // Upsert contact (minimal — classification is done by wa-bridge)
+        await client.query(
+          `INSERT INTO contacts (wa_id, country, updated_at)
+           VALUES ($1, $2, now())
+           ON CONFLICT (wa_id) DO UPDATE SET
+             country = COALESCE(EXCLUDED.country, contacts.country),
+             updated_at = now()`,
+          [wa_id, country || inferredMarket || null]
+        );
+      }
 
       // Read contact state once — reuse for gate + facts
       const ctRes = await client.query(
@@ -306,6 +331,16 @@ export function replyRouter() {
         `- Médico verificado: ${doctorLabel}`,
         `- Market: ${market || 'desconocido'}`,
         `- Interés detectado: ${inferredInterest}`,
+        ...(metaLead ? [
+          '',
+          '## Lead de Meta Ads',
+          'Este contacto llegó por formulario de campaña de Meta (médicos Perú).',
+          'Ya está identificado — no pedir que se presente de nuevo.',
+          metaLead.profession ? `- Especialidad declarada: ${metaLead.profession}` : '',
+          metaLead.full_name  ? `- Nombre: ${metaLead.full_name}` : '',
+          'Dar la bienvenida, confirmar que puede ayudar con NIPT y ofrecer el flyer de materiales directamente.',
+          'No escalar por este mensaje.',
+        ].filter(Boolean) : []),
         '',
         `## Historial reciente (últimos ${contextDays()} días, máx ${contextMaxMessages()} mensajes)`,
         transcriptLines.length ? transcriptLines.join('\n') : '(sin historial previo)',
@@ -333,8 +368,8 @@ export function replyRouter() {
       const out = await llmReply({ system: SYSTEM_PROMPT, user: userPrompt });
       let rawText = String(out?.text || '').trim();
 
-      // Detect escalation signal (anywhere in text) and strip all occurrences before sending to user
-      const shouldEscalate = /\[ESCALAR\]/.test(rawText);
+      // Detect escalation signal — suppressed for Meta lead first contact
+      const shouldEscalate = !metaLead && /\[ESCALAR\]/.test(rawText);
       const replyText = shouldEscalate
         ? rawText.replace(/\[ESCALAR\]\s*/g, '').trim()
         : rawText || '¿En qué puedo ayudarte hoy?';

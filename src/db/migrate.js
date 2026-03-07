@@ -51,6 +51,11 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_items_lookup
   ON knowledge_items (domain, kind, market, key)
 `;
 
+// Migration 3: add email column to contacts (Meta lead enrichment)
+const SQL_M3 = `
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS email TEXT;
+`;
+
 // Migration 2: replace UNIQUE(domain,kind,market,key) — which treats NULL!=NULL —
 // with a functional unique index using COALESCE so global (market IS NULL) items
 // don't generate duplicates on re-seed.
@@ -69,6 +74,7 @@ export async function migrate() {
     await client.query('BEGIN');
     await client.query(SQL);
     await client.query(SQL_M2);
+    await client.query(SQL_M3);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
