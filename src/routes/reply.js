@@ -163,6 +163,7 @@ const SYSTEM_PROMPT = [
   '- Antes de dar información de logística, centros de extracción o proceso de toma de muestra, confirmá la ciudad o zona del contacto si no la tenés.',
   '- Usar el historial para no repetir ni información ni preguntas ya dadas.',
   '- No evaluar ni elogiar la práctica clínica del médico ("excelente conducta", "muy buena decisión"). Tratalo como par.',
+  '- Si el contacto introduce un intent nuevo (menciona "caso", "paciente", "colega", "resultado", "diagnóstico", "alto riesgo") en medio de un flow de materiales o derivación: cerrá ese flow y atendé el intent nuevo. Hacé 1 sola pregunta de triage. No ofrezcas flyers ni textos cuando el contacto está preguntando por un caso clínico.',
   '',
   'TONO Y FORMATO:',
   '- Si el contacto abre con un saludo, respondé con un saludo breve antes de ir al punto.',
@@ -190,7 +191,8 @@ const SYSTEM_PROMPT = [
   '- Afirmar que algo ya ocurrió (consulta al equipo, envío de credenciales, llamada, correo) si no hay evidencia explícita en el historial. Usá presente: "Lo estoy derivando al equipo", nunca "Ya lo consulté".',
   '- Confirmar disponibilidad o agenda de terceros (Johanna, el equipo, un laboratorio) sin tener esa información.',
   '- Repetir la misma pregunta si el contacto mostró que no la entendió; en ese caso avanzá sin preguntar.',
-  '- Volver a ofrecer o preguntar algo que el contacto acaba de rechazar ("no", "gracias", "no gracias", "lo voy a pensar"); aceptá el cierre y no insistas.',
+  '- **CIERRE — regla dura:** Si el último mensaje del contacto contiene una negativa clara ("no", "no no", "nada", "no ahora", "después", "por el momento no", "está bien así", "listo gracias", "gracias" como cierre, o cualquier rechazo explícito a una oferta) → respondé con UNA sola frase corta de despedida y NO agregues ninguna pregunta ni CTA al final de ese mensaje. La frase de cierre ES el mensaje completo. Ejemplo MAL: "Quedo a disposición. ¿Querés que te pase un flyer?" — Ejemplo BIEN: "Quedo a disposición cuando lo necesites."',
+  '- Usar frases como "lo dejamos registrado" o "queda registrado" como si hubiera un sistema automático. Usá "lo tengo en cuenta" o "lo coordinamos" según el contexto.',
   '',
   'ESCALACIÓN — obligatoria en estos casos:',
   '- Preguntas sobre accesos, credenciales, estado de casos, pagos o cualquier dato operativo interno de Genesia que no esté en el Conocimiento disponible.',
@@ -334,6 +336,11 @@ export function replyRouter() {
       // Fetch transcript
       const transcriptLines = await fetchRecentTranscript(client, wa_id);
 
+      // Detect assets already sent in this thread (prevent re-offering)
+      const sentAssetUrls = transcriptLines
+        .filter(l => l.startsWith('Valeria:') && l.includes('genesia.la/assets/'))
+        .flatMap(l => l.match(/https:\/\/genesia\.la\/assets\/\S+/g) || []);
+
       // Build user prompt as clean sections
       const contactLabel = contactType === 'unknown' ? 'desconocido' : contactType;
       const doctorLabel = verifiedDoctor ? 'sí (verificado)' : 'no'; // verifiedDoctor may have been updated by post-gate check
@@ -363,6 +370,10 @@ export function replyRouter() {
         '',
         '## Mensaje actual',
         userText,
+        ...(sentAssetUrls.length > 0 ? [
+          '',
+          `> **[sistema]** Ya enviaste estos recursos en este hilo: ${sentAssetUrls.join(', ')} — No los vuelvas a ofrecer proactivamente. Mencionarlos solo si el contacto los pide de nuevo explícitamente.`,
+        ] : []),
         '',
         ...(adminInstruction ? [
           '## Instrucción del equipo Genesia',
