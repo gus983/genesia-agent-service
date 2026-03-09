@@ -323,20 +323,8 @@ export function replyRouter() {
       const lastValeriaOut = lastOutRows[0]?.text || null;
       const pendingAdminReport = !adminInstruction && lastOutRows[0]?.meta?.admin_triggered === true;
 
-      // Honorarium hard guardrail — must be verified doctor
-      if (intentEff === 'honorarium' && !verifiedDoctor) {
-        const replyText = '¿Sos obstetra/ginecólogo/médico?';
-
-        await client.query(
-          `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
-          [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v2' }]
-        );
-
-        await client.query('COMMIT');
-        return res.json({ ok: true, reply: replyText, escalated: false, action: { kind: 'text' } });
-      }
-
       // product_interest and stage are updated in the CRM upsert after the LLM reply
+      // NOTE: honorarium gate moved to after classifier so is_doctor can prevent it
 
       // Log inbound
       let market = inferredMarket || (country ? String(country).toUpperCase() : null);
@@ -404,6 +392,29 @@ export function replyRouter() {
           market = classifier.market;
           console.log(`market_from_classifier wa_id=...${String(wa_id).slice(-6)} market=${classifier.market}`);
         }
+        // Doctor verification via classifier (threshold 0.85, only if not already verified)
+        const DOCTOR_CLASSIFIER_THRESHOLD = Number(process.env.DOCTOR_CLASSIFIER_THRESHOLD || 0.85);
+        if (!verifiedDoctor && classifier.is_doctor === true && classifier.doctor_confidence >= DOCTOR_CLASSIFIER_THRESHOLD) {
+          await client.query(
+            `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
+            [wa_id]
+          );
+          verifiedDoctor = true;
+          console.log(`doctor_verified_by_classifier wa_id=...${String(wa_id).slice(-6)} conf=${classifier.doctor_confidence.toFixed(2)}`);
+        }
+      }
+
+      // Honorarium hard guardrail — must be verified doctor (runs after classifier so is_doctor can prevent gate)
+      if (intentEff === 'honorarium' && !verifiedDoctor) {
+        const replyText = '¿Sos obstetra/ginecólogo/médico?';
+
+        await client.query(
+          `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
+          [wa_id, replyText, { provider: 'rule', rule: 'honorarium_gate_v2' }]
+        );
+
+        await client.query('COMMIT');
+        return res.json({ ok: true, reply: replyText, escalated: false, action: { kind: 'text' } });
       }
 
       await client.query(

@@ -1,7 +1,8 @@
 /**
  * turnClassifier.js — Mini-clasificador LLM de turno (haiku, una llamada, multi-salida).
  *
- * Clasifica un mensaje de usuario en: intent, domain, market, ack_only, confidence.
+ * Clasifica un mensaje de usuario en: intent, domain, market, ack_only, confidence,
+ * is_doctor, doctor_confidence.
  * Usa claude-haiku para velocidad/costo. Retorna null si falla o el JSON no es válido.
  *
  * Feature flag: TURN_CLASSIFIER=llm en el proceso caller (no en este módulo).
@@ -30,7 +31,9 @@ DEVOLVÉ EXACTAMENTE ESTE JSON:
   "domain": "nipt" | "cancer" | "general",
   "market": "AR" | "CO" | "PE" | null,
   "ack_only": boolean,
-  "confidence": number
+  "confidence": number,
+  "is_doctor": true | false | null,
+  "doctor_confidence": number
 }
 
 DEFINICIONES:
@@ -54,6 +57,16 @@ DEFINICIONES:
 
 - ack_only=true SOLO si el mensaje es una confirmación breve/cierre conversacional y NO agrega una pregunta nueva ni información nueva relevante.
 
+- is_doctor: identifica si el usuario es médico/obstetra/ginecólogo.
+  true si:
+    (a) Se identifica explícitamente como médico ("soy obstetra", "tengo consultorio de obstetricia", "ginecóloga", "médico", etc.), O
+    (b) last_valeria_out contiene una pregunta sobre profesión médica ("¿Sos obstetra?", "¿Sos médico/a?", etc.) Y el user_text es una afirmación ("sí", "si", "claro", "sí soy", "efectivamente", etc.).
+  false si se identifica como paciente o no-médico.
+  null si no hay evidencia suficiente. NO adivines — preferí null a un false incorrecto.
+  IMPORTANTE: "sí" genérico sin contexto de pregunta profesional → null, no true.
+
+- doctor_confidence: qué tan seguro estás de is_doctor. 0 si is_doctor=null.
+
 DATOS:
 - last_valeria_out: <<<${lastValeriaOut ?? 'null'}>>>
 - contact_country_hint: <<<${contactCountryHint ?? 'null'}>>>
@@ -64,7 +77,7 @@ DEVOLVÉ SOLO JSON.`;
 
 /**
  * @param {{ userText: string, lastValeriaOut: string|null, contactCountryHint: string|null }} opts
- * @returns {Promise<{intent,domain,market,ack_only,confidence}|null>}
+ * @returns {Promise<{intent,domain,market,ack_only,confidence,is_doctor,doctor_confidence}|null>}
  */
 export async function classifyTurn({ userText, lastValeriaOut, contactCountryHint }) {
   const system = SYSTEM_PROMPT;
@@ -97,12 +110,16 @@ export async function classifyTurn({ userText, lastValeriaOut, contactCountryHin
   const confidence = typeof parsed?.confidence === 'number'
     ? Math.min(1, Math.max(0, parsed.confidence))
     : 0;
+  const is_doctor = parsed?.is_doctor === true ? true : parsed?.is_doctor === false ? false : null;
+  const doctor_confidence = typeof parsed?.doctor_confidence === 'number'
+    ? Math.min(1, Math.max(0, parsed.doctor_confidence))
+    : 0;
 
   if (!intent || !domain) {
     console.error(`turn_classifier validation_error parsed=${JSON.stringify(parsed)}`);
     return null;
   }
 
-  console.log(`turn_classifier ok intent=${intent} domain=${domain} market=${market} ack_only=${ack_only} conf=${confidence.toFixed(2)}`);
-  return { intent, domain, market, ack_only, confidence };
+  console.log(`turn_classifier ok intent=${intent} domain=${domain} market=${market} ack_only=${ack_only} conf=${confidence.toFixed(2)} is_doctor=${is_doctor} doc_conf=${doctor_confidence.toFixed(2)}`);
+  return { intent, domain, market, ack_only, confidence, is_doctor, doctor_confidence };
 }
