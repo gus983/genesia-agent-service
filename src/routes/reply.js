@@ -12,6 +12,14 @@ function inferMarketFromWaId(wa_id = '') {
   return null;
 }
 
+// Detect market mentioned explicitly in a text string (user message or LLM reply)
+function extractMarketFromText(text = '') {
+  if (/\b(argentina|arg(?:entina)?|buenos\s+aires|bs\.?\s*as\.?)\b/i.test(text)) return 'AR';
+  if (/\b(colombia|col(?:ombia)?|bogot[aá]|medell[ií]n|cali)\b/i.test(text)) return 'CO';
+  if (/\b(per[uú]|lima|arequipa|trujillo|cusco)\b/i.test(text)) return 'PE';
+  return null;
+}
+
 function contextDays() {
   const n = Number(process.env.CONTEXT_DAYS || 60);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 365) : 60;
@@ -329,7 +337,44 @@ export function replyRouter() {
       // product_interest and stage are updated in the CRM upsert after the LLM reply
 
       // Log inbound
-      const market = inferredMarket || (country ? String(country).toUpperCase() : null);
+      let market = inferredMarket || (country ? String(country).toUpperCase() : null);
+
+      // PR #1b — Market gate: resolve market when phone prefix and body param are absent
+      if (!market) {
+        // 1. Direct mention in user text (e.g. "soy de Argentina")
+        const textMarket = extractMarketFromText(userText);
+        if (textMarket) {
+          await client.query(
+            `UPDATE contacts SET country = $2, updated_at = now() WHERE wa_id = $1`,
+            [wa_id, textMarket]
+          );
+          market = textMarket;
+          console.log(`market_from_text wa_id=...${String(wa_id).slice(-6)} market=${textMarket}`);
+        } else {
+          // 2. Pending market gate with a candidate market + user says affirmative
+          const MARKET_GATE_TTL_MS = 30 * 60 * 1000;
+          const { rows: mktGateRows } = await client.query(
+            `SELECT meta, created_at FROM messages
+             WHERE wa_id = $1 AND direction = 'out' AND meta->>'rule' = 'market_gate_v1'
+             ORDER BY created_at DESC LIMIT 1`,
+            [wa_id]
+          );
+          const mktGate = mktGateRows[0];
+          const mktGateAge = Date.now() - new Date(mktGate?.created_at || 0).getTime();
+          const mktGatePending = !!mktGate && mktGateAge < MARKET_GATE_TTL_MS;
+          const candidateMarket = mktGate?.meta?.market || null;
+          const isAffirmativeToMktGate = mktGatePending && candidateMarket &&
+            /^(s[ií]|ok\b|claro|exacto|correcto|confirmo|dale|obvio|de\s+una)\b/i.test(userText.trim());
+          if (isAffirmativeToMktGate) {
+            await client.query(
+              `UPDATE contacts SET country = $2, updated_at = now() WHERE wa_id = $1`,
+              [wa_id, candidateMarket]
+            );
+            market = candidateMarket;
+            console.log(`market_gate_confirmed wa_id=...${String(wa_id).slice(-6)} market=${candidateMarket}`);
+          }
+        }
+      }
 
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
@@ -420,6 +465,11 @@ export function replyRouter() {
         notifyAdminReport({ wa_id, leadText: userText, valeriaReply: replyText });
       }
 
+      // PR #1b — If market still unknown and LLM reply asks about a specific country,
+      // tag the outbound as market_gate_v1 so next turn can confirm and persist.
+      const replyMarketHint = !market ? extractMarketFromText(replyText) : null;
+      const replyIsMarketQuestion = replyMarketHint && /\?/.test(replyText) ? replyMarketHint : null;
+
       // Log outbound
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'out',$2,$3)`,
@@ -428,6 +478,7 @@ export function replyRouter() {
           ms: out.ms,
           ...(shouldEscalate ? { escalated: true } : {}),
           ...(adminInstruction ? { admin_triggered: true } : {}),
+          ...(replyIsMarketQuestion ? { rule: 'market_gate_v1', market: replyIsMarketQuestion } : {}),
         }]
       );
 
