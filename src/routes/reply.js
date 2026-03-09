@@ -268,27 +268,31 @@ export function replyRouter() {
       let verifiedDoctor = ctRes.rows?.[0]?.verified_doctor === true;
       let intentEff = intent;
 
-      // Doctor self-identification: if contact says they're a doctor in any context, verify them.
-      // Also restore 'honorarium' intent if the hard gate was the last message (so the LLM answers
-      // the original pricing question instead of defaulting to generic info).
-      if (!verifiedDoctor && /\b(obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText)) {
+      // Doctor self-identification: verify contact if they mention a medical keyword,
+      // or if they give an affirmative response right after the honorarium gate question.
+      const GATE_TTL_MS = 30 * 60 * 1000;
+      const { rows: lastGateRows } = await client.query(
+        `SELECT meta, created_at FROM messages
+         WHERE wa_id = $1 AND direction = 'out' AND meta->>'rule' = 'honorarium_gate_v2'
+         ORDER BY created_at DESC LIMIT 1`,
+        [wa_id]
+      );
+      const lastGate = lastGateRows[0];
+      const gateAge = Date.now() - new Date(lastGate?.created_at || 0).getTime();
+      const gatePending = !!lastGate && gateAge < GATE_TTL_MS;
+
+      const mentionsMedKeyword = /\b(obstetra|ginec[oó]|m[eé]dic[oa]|doctor[a]?)\b/i.test(userText);
+      // Accept short affirmatives ("Sí", "Ok", "Claro") only when gate is pending — not as standalone self-id
+      const isAffirmativeToGate = gatePending && /^(s[ií]|ok\b|claro|exacto|correcto|confirmo)\b/i.test(userText.trim());
+
+      if (!verifiedDoctor && (mentionsMedKeyword || isAffirmativeToGate)) {
         await client.query(
           `UPDATE contacts SET verified_doctor = true, updated_at = now() WHERE wa_id = $1`,
           [wa_id]
         );
         verifiedDoctor = true;
         console.log(`doctor_self_identified wa_id=...${String(wa_id).slice(-6)}`);
-
-        // If the last outbound was the hard gate AND it's recent, restore honorarium intent
-        const { rows: lastOut } = await client.query(
-          `SELECT meta, created_at FROM messages
-           WHERE wa_id = $1 AND direction = 'out'
-           ORDER BY created_at DESC LIMIT 1`,
-          [wa_id]
-        );
-        const GATE_TTL_MS = 30 * 60 * 1000;
-        const gateAge = Date.now() - new Date(lastOut[0]?.created_at || 0).getTime();
-        if (lastOut[0]?.meta?.rule === 'honorarium_gate_v2' && gateAge < GATE_TTL_MS) {
+        if (gatePending) {
           intentEff = 'honorarium';
           console.log(`gate_confirmed wa_id=...${String(wa_id).slice(-6)}`);
         }

@@ -1,7 +1,7 @@
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0';
 
-// Rate limit: one escalation notification per wa_id per N minutes
-const NOTIFY_RATE_LIMIT_MS = Number(process.env.NOTIFY_RATE_LIMIT_MS || 5 * 60 * 1000);
+// Rate limit: one escalation notification per wa_id per N seconds
+const NOTIFY_RATE_LIMIT_MS = Number(process.env.NOTIFY_RATE_LIMIT_MS || 90 * 1000); // 90s default
 const _lastNotified = new Map(); // wa_id -> timestamp
 
 // Coalescing window for report-back notifications (ms)
@@ -12,6 +12,31 @@ function isRateLimited(wa_id) {
   const last = _lastNotified.get(wa_id);
   if (!last) return false;
   return (Date.now() - last) < NOTIFY_RATE_LIMIT_MS;
+}
+
+async function sendWhatsAppTemplate(to, templateName, lang = 'es') {
+  const token = process.env.WA_TOKEN;
+  const phoneNumberId = process.env.PHONE_NUMBER_ID;
+  if (!token || !phoneNumberId) return false;
+  const resp = await fetch(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'template',
+        template: { name: templateName, language: { code: lang } },
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    console.error('notifyAdmin: template send failed', resp.status, err?.error?.message || '');
+    return false;
+  }
+  return true;
 }
 
 async function sendWhatsAppText(to, body) {
@@ -41,7 +66,17 @@ async function sendWhatsAppText(to, body) {
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    console.error('notifyAdmin: WA send failed', resp.status, err?.error?.message || '');
+    const errCode = err?.error?.code;
+    console.error('notifyAdmin: WA send failed', resp.status, errCode, err?.error?.message || '');
+    if (errCode === 131047) {
+      // Recipient outside 24h window — send template to reopen, then retry text
+      console.log(`notifyAdmin: 131047 for ${to.slice(-6)} — sending saludo_1 template to reopen window`);
+      const ok = await sendWhatsAppTemplate(to, 'saludo_1', 'es');
+      if (ok) {
+        await new Promise(r => setTimeout(r, 1000));
+        await sendWhatsAppText(to, body);
+      }
+    }
   }
 }
 
