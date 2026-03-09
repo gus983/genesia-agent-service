@@ -87,10 +87,10 @@ export async function openaiReply({ system, user, model }) {
   return pickTextFromOpenAIResponses(data);
 }
 
-export async function llmReply({ system, user }) {
+export async function llmReply({ system, user, model }) {
   const t0 = Date.now();
   try {
-    const out = await claudeReply({ system, user });
+    const out = await claudeReply({ system, user, model });
     return { ok: true, provider: 'anthropic', ms: Date.now() - t0, text: out };
   } catch (e) {
     // fallback

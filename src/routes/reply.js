@@ -3,6 +3,7 @@ import { getPool } from '../db/index.js';
 import { llmReply } from '../lib/llm.js';
 import { notifyAdmin, notifyAdminReport } from '../lib/notify.js';
 import { parseMetaLead, leadToContactUpdate } from '../lib/parseMetaLead.js';
+import { classifyTurn } from '../lib/turnClassifier.js';
 
 function inferMarketFromWaId(wa_id = '') {
   const s = String(wa_id).replace(/^\+/, '');
@@ -314,11 +315,12 @@ export function replyRouter() {
 
       // Detect if last outbound was admin-triggered — report back after this reply
       const { rows: lastOutRows } = await client.query(
-        `SELECT meta FROM messages
+        `SELECT text, meta FROM messages
          WHERE wa_id = $1 AND direction = 'out'
          ORDER BY created_at DESC LIMIT 1`,
         [wa_id]
       );
+      const lastValeriaOut = lastOutRows[0]?.text || null;
       const pendingAdminReport = !adminInstruction && lastOutRows[0]?.meta?.admin_triggered === true;
 
       // Honorarium hard guardrail — must be verified doctor
@@ -376,6 +378,34 @@ export function replyRouter() {
         }
       }
 
+      // Turn classifier — LLM multi-output (feature flag TURN_CLASSIFIER=llm)
+      let classifier = null;
+      if (process.env.TURN_CLASSIFIER === 'llm') {
+        classifier = await classifyTurn({
+          userText,
+          lastValeriaOut,
+          contactCountryHint: market || null,
+        }).catch(e => { console.error('turn_classifier failed:', e?.message); return null; });
+      }
+
+      // Apply classifier results with thresholds (case_status always wins from regex)
+      if (classifier) {
+        if (classifier.intent && classifier.confidence >= 0.70 && intentEff !== 'case_status') {
+          intentEff = classifier.intent;
+        }
+        if (classifier.domain && classifier.domain !== 'general' && classifier.confidence >= 0.70) {
+          inferredInterest = classifier.domain;
+        }
+        if (classifier.market && classifier.confidence >= 0.80 && !market) {
+          await client.query(
+            `UPDATE contacts SET country = $2, updated_at = now() WHERE wa_id = $1`,
+            [wa_id, classifier.market]
+          );
+          market = classifier.market;
+          console.log(`market_from_classifier wa_id=...${String(wa_id).slice(-6)} market=${classifier.market}`);
+        }
+      }
+
       await client.query(
         `INSERT INTO messages (wa_id, direction, text, meta) VALUES ($1,'in',$2,$3)`,
         [wa_id, userText, { source: 'wa-bridge', intent: intentEff, inferredMarket, inferredInterest }]
@@ -428,6 +458,10 @@ export function replyRouter() {
         ...(sentAssetUrls.length > 0 ? [
           '',
           `> **[sistema]** Ya enviaste estos recursos en este hilo: ${sentAssetUrls.join(', ')} — No los vuelvas a ofrecer proactivamente. Mencionarlos solo si el contacto los pide de nuevo explícitamente.`,
+        ] : []),
+        ...(classifier?.ack_only && classifier.confidence >= 0.75 ? [
+          '',
+          '> **[sistema]** El contacto solo confirmó/cerró — respondé con UNA SOLA frase sin pregunta ni CTA.',
         ] : []),
         '',
         ...(adminInstruction ? [
