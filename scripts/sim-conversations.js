@@ -466,14 +466,19 @@ ${sections.join('\n')}
 
 async function main() {
   const startedAt = new Date();
-  console.log(`\n🚀 Simulación iniciada — ${PERSONAS.length} personas, endpoint: ${AGENT_URL}\n`);
+  console.log(`\n🚀 Simulación iniciada — endpoint: ${AGENT_URL}\n`);
 
   // Run selected personas (all by default, or filter via env)
   const filter = process.env.SIM_PERSONA;
-  const toRun = filter ? PERSONAS.filter(p => p.id === filter) : PERSONAS;
+  const marketFilter = process.env.SIM_MARKET ? String(process.env.SIM_MARKET).toUpperCase() : null;
+  const simN = Number(process.env.SIM_N) || 0; // 0 = no limit
+
+  let toRun = filter ? PERSONAS.filter(p => p.id === filter) : PERSONAS;
+  if (marketFilter) toRun = toRun.filter(p => p.market === marketFilter);
+  if (simN > 0) toRun = toRun.slice(0, simN);
 
   if (!toRun.length) {
-    console.error(`No personas matched filter: ${filter}`);
+    console.error(`No personas matched filter: ${filter || '(all)'} market: ${marketFilter || '(all)'}`);
     process.exit(1);
   }
 

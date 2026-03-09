@@ -1,5 +1,6 @@
 import express from 'express';
 import { replyRouter } from './routes/reply.js';
+import { simRouter } from './routes/sim.js';
 
 export function createApp() {
   const app = express();
@@ -9,6 +10,7 @@ export function createApp() {
   app.get('/health', (_req, res) => res.json({ ok: true, service: 'genesia-agent-service', time: new Date().toISOString() }));
 
   app.use('/reply', replyRouter());
+  app.use('/sim', simRouter());
 
   app.use((_req, res) => res.status(404).json({ ok: false, error: 'not_found' }));
 
