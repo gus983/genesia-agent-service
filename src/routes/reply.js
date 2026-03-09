@@ -234,7 +234,7 @@ export function replyRouter() {
     const userText = String(text || '').trim();
     const adminInstruction = admin_instruction ? String(admin_instruction).trim() : null;
     const inferredMarket = inferMarketFromWaId(wa_id);
-    const inferredInterest = classifyInterest(userText);
+    let inferredInterest = classifyInterest(userText);
     const intent = adminInstruction ? 'admin_reply' : extractIntent(userText);
 
     try {
