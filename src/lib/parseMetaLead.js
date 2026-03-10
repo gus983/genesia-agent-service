@@ -77,7 +77,7 @@ export function leadToContactUpdate(lead) {
   const profession = String(lead.profession || '').toLowerCase();
 
   let contact_type    = 'medico_derivador'; // campaign default
-  let verified_doctor = true;
+  let verified_doctor = profession ? MEDICAL_RE.test(profession) : false;
 
   if (INSTITUTION_RE.test(profession) && !MEDICAL_RE.test(profession)) {
     contact_type    = 'institucion';

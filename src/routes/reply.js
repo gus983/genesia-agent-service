@@ -454,7 +454,9 @@ export function replyRouter() {
           'Ya está identificado — no pedir que se presente de nuevo.',
           metaLead.profession ? `- Especialidad declarada: ${metaLead.profession}` : '',
           metaLead.full_name  ? `- Nombre: ${metaLead.full_name}` : '',
-          'Dar la bienvenida, confirmar que puede ayudar con NIPT y ofrecer el flyer de materiales directamente.',
+          verifiedDoctor
+            ? 'Bienvenida en 1 frase + UNA pregunta sobre cómo trabaja hoy con NIPT o el tamaño de su práctica. No ofrecer materiales todavía.'
+            : 'Primer mensaje EXACTAMENTE así (adaptando el nombre): "Hola [nombre], gracias por completar el formulario. Para orientarte bien: ¿sos obstetra/ginecólogo/a, o estás consultando como paciente?" Nada más — ni flyers, ni info de producto, ni descripción de Genesia.',
           'No escalar por este mensaje.',
         ].filter(Boolean) : []),
         '',
